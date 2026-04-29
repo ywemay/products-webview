@@ -14,3 +14,9 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Logs
+logs/
+
+# Runtime data (per-user)
+data/settings.json
