@@ -14,7 +14,19 @@ import os
 import random
 import sys
 import threading
-import queue
+import traceback
+
+
+# ---------------------------------------------------------------------------
+# Logging: writes to stderr (captured by run.sh tee to log file)
+# ---------------------------------------------------------------------------
+def log(msg):
+    print(f"[products-webview] {msg}", file=sys.stderr, flush=True)
+
+
+def log_error(msg):
+    print(f"[products-webview ERROR] {msg}", file=sys.stderr, flush=True)
+    traceback.print_exc(file=sys.stderr)
 
 import webview
 from bottle import Bottle, response, request, static_file, run as bottle_run
@@ -228,101 +240,82 @@ def api_update_description():
 
 
 # File dialog helpers ----------------------------------------------------
-# PyWebView dialog bridge: instead of spawning GTK from the Bottle thread
-# (which deadlocks), we use a pywebview JS API class that runs on the GTK
-# main thread via evaluate_js().
-#
-# The flow:
-#   1. Bottle route returns a special response that tells the JS frontend
-#      to call window.pywebview.api.pickDirectory() / pickPhotos()
-#   2. Those methods run on the GTK thread, show the native dialog,
-#      and return the result
-#
-# We use a queue-based approach: the HTTP thread returns a promise ID,
-# JS calls pywebview API, JS resolves the promise, HTTP thread picks up
-# the result.
-
-_promise_queue = {}
-_promise_lock = threading.Lock()
-_next_promise_id = 0
-
-def _next_id():
-    global _next_promise_id
-    with _promise_lock:
-        _next_promise_id += 1
-        return _next_promise_id
-
-
-def _resolve_promise(promise_id: int, value):
-    """Called from pywebview JS API to resolve a pending HTTP response."""
-    with _promise_lock:
-        q = _promise_queue.get(promise_id)
-        if q:
-            q.put(value)
+# The JS frontend calls window.pywebview.api.pickDirectory() / pickPhotos()
+# directly. These methods run on the GTK main thread and are safe to call.
+# The HTTP routes (/api/pick-directory, /api/pick-photos) still exist as
+# fallbacks but are not the primary path.
 
 
 class Api:
     """PyWebView JS API — runs on the GTK main thread."""
 
     def pickDirectory(self):
-        import gi
-        gi.require_version('Gtk', '3.0')
-        from gi.repository import Gtk
-        dialog = Gtk.FileChooserDialog(
-            title="Choose a directory",
-            action=Gtk.FileChooserAction.SELECT_FOLDER,
-        )
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Open", Gtk.ResponseType.OK)
-        result = dialog.run()
-        path = None
-        if result == Gtk.ResponseType.OK:
-            path = dialog.get_filename()
-        dialog.destroy()
-        return path
+        log("pickDirectory: opening GTK folder chooser...")
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            from gi.repository import Gtk
+            dialog = Gtk.FileChooserDialog(
+                title="Choose a directory",
+                action=Gtk.FileChooserAction.SELECT_FOLDER,
+            )
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Open", Gtk.ResponseType.OK)
+            result = dialog.run()
+            path = None
+            if result == Gtk.ResponseType.OK:
+                path = dialog.get_filename()
+                log(f"pickDirectory: user selected {path}")
+            else:
+                log("pickDirectory: user cancelled")
+            dialog.destroy()
+            return path
+        except Exception as e:
+            log_error(f"pickDirectory failed: {e}")
+            raise
 
     def pickPhotos(self):
-        import gi
-        gi.require_version('Gtk', '3.0')
-        from gi.repository import Gtk
-        dialog = Gtk.FileChooserDialog(
-            title="Select photos",
-            action=Gtk.FileChooserAction.OPEN,
-        )
-        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Open", Gtk.ResponseType.OK)
-        dialog.set_select_multiple(True)
-        filt = Gtk.FileFilter()
-        filt.set_name("Images")
-        filt.add_mime_type("image/jpeg")
-        filt.add_mime_type("image/png")
-        filt.add_mime_type("image/webp")
-        dialog.add_filter(filt)
-        dialog.add_shortcut_folder(os.path.expanduser("~/Pictures"))
-        result = dialog.run()
-        paths = []
-        if result == Gtk.ResponseType.OK:
-            paths = dialog.get_filenames()
-        dialog.destroy()
-        return paths
+        log("pickPhotos: opening GTK file chooser...")
+        try:
+            import gi
+            gi.require_version('Gtk', '3.0')
+            from gi.repository import Gtk
+            dialog = Gtk.FileChooserDialog(
+                title="Select photos",
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Open", Gtk.ResponseType.OK)
+            dialog.set_select_multiple(True)
+            filt = Gtk.FileFilter()
+            filt.set_name("Images")
+            filt.add_mime_type("image/jpeg")
+            filt.add_mime_type("image/png")
+            filt.add_mime_type("image/webp")
+            dialog.add_filter(filt)
+            dialog.add_shortcut_folder(os.path.expanduser("~/Pictures"))
+            result = dialog.run()
+            paths = []
+            if result == Gtk.ResponseType.OK:
+                paths = dialog.get_filenames()
+                log(f"pickPhotos: user selected {len(paths)} file(s)")
+            else:
+                log("pickPhotos: user cancelled")
+            dialog.destroy()
+            return paths
+        except Exception as e:
+            log_error(f"pickPhotos failed: {e}")
+            raise
 
 
 @bottle_app.post("/api/pick-directory")
 def api_pick_directory():
-    promise_id = _next_id()
-    q = queue.Queue()
-    with _promise_lock:
-        _promise_queue[promise_id] = q
-    return json_ok({"__pywebview_dialog__": True, "method": "pickDirectory", "promiseId": promise_id})
+    return json_err("pywebview API not available")
 
 
 @bottle_app.post("/api/pick-photos")
 def api_pick_photos():
-    promise_id = _next_id()
-    q = queue.Queue()
-    with _promise_lock:
-        _promise_queue[promise_id] = q
-    return json_ok({"__pywebview_dialog__": True, "method": "pickPhotos", "promiseId": promise_id})
+    return json_err("pywebview API not available")
 
 
 @bottle_app.post("/api/delete-products")
@@ -374,14 +367,17 @@ def start_server(port: int):
 
 def main():
     port = random.randint(18000, 18999)
+    log(f"Starting server on 127.0.0.1:{port}")
     set_api_port(port)
 
     # Start HTTP server in background
     server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
     server_thread.start()
+    log("Server thread started")
 
     # Create the WebView window with a JS API object
     api = Api()
+    log("Creating WebView window...")
     webview.create_window(
         "Products Manager",
         url=f"http://127.0.0.1:{port}/",
@@ -392,8 +388,14 @@ def main():
     )
 
     # Start the GUI loop (blocks until window is closed)
+    log("Starting GTK main loop...")
     webview.start(gui="gtk", private_mode=False)
+    log("Application closed.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        log_error("Fatal crash in main()")
+        sys.exit(1)
