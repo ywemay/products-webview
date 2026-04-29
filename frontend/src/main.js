@@ -106,6 +106,36 @@ function render() {
     renderContent();
     renderMessages();
     renderPhotoOverlay();
+    renderSelectionState();
+}
+
+function renderSelectionState() {
+    const s = app.getState();
+    const grid = document.getElementById('gallery-grid');
+    if (!grid) return;
+
+    // Toggle selected class on cards
+    const cards = grid.querySelectorAll('.product-card');
+    for (const card of cards) {
+        const file = card.dataset.file;
+        if (s.selectedFiles.indexOf(file) !== -1) {
+            card.classList.add('selected');
+        } else {
+            card.classList.remove('selected');
+        }
+    }
+
+    // Update header for select mode
+    const header = document.getElementById('gallery-header');
+    if (header) {
+        if (s.selectMode) {
+            header.classList.add('select-mode');
+            const countEl = header.querySelector('.selection-count');
+            if (countEl) countEl.textContent = s.selectedFiles.length + ' selected';
+        } else {
+            header.classList.remove('select-mode');
+        }
+    }
 }
 
 function renderHeader() {
@@ -207,7 +237,9 @@ function renderSidebar() {
             html += '<div class="file-item ' + (isSelected ? 'selected' : '') + '" data-file="' + escapeHtml(f) + '">' +
                 '<span class="icon">📄</span>' +
                 '<span class="name">' + escapeHtml(name) + '</span>' +
-                '</div>';
+                '<span class="file-item-actions" style="margin-left:auto;display:none">' +
+                '<button class="btn btn-xs btn-danger" data-action="sidebar-delete" data-file="' + escapeHtml(f) + '">✕</button>' +
+                '</span></div>';
         });
     }
 
@@ -593,16 +625,128 @@ function renderMarkdown(text) {
 
 // ========== GALLERY ==========
 
+function renderGalleryHeader() {
+    const s = app.getState();
+    const header = document.getElementById('gallery-header');
+    if (s.selectMode) {
+        header.classList.add('select-mode');
+        const count = s.selectedFiles.length;
+        header.innerHTML = `
+            <span class="selection-count">${count} selected</span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" data-action="deselect-all">✕ Deselect</button>
+            <button class="btn btn-sm btn-danger" data-action="delete-selected">🗑 Delete</button>
+        `;
+    } else {
+        header.classList.remove('select-mode');
+        const fileCount = s.files.length;
+        header.innerHTML = `
+            <span id="gallery-count">${fileCount} product(s)</span>
+            <span class="gallery-notice">Click a card to open editor; Ctrl+click to multi-select</span>
+        `;
+    }
+}
+
+function getSelectedFiles() {
+    return app.getState().selectedFiles;
+}
+
+function isFileSelected(file) {
+    return app.getState().selectedFiles.indexOf(file) !== -1;
+}
+
+function toggleFileSelection(file, shiftKey, ctrlKey) {
+    const s = app.getState();
+    let sel = [...s.selectedFiles];
+
+    if (ctrlKey || shiftKey) {
+        const idx = sel.indexOf(file);
+        if (idx !== -1) {
+            sel.splice(idx, 1);
+        } else {
+            sel.push(file);
+        }
+    } else {
+        // Single select — clear others first
+        if (sel.length === 1 && sel[0] === file) {
+            // Clicking the same one — toggle off
+            sel = [];
+        } else {
+            sel = [file];
+        }
+    }
+
+    app.setState({
+        selectedFiles: sel,
+        selectMode: sel.length > 0,
+    });
+}
+
+async function handleDeleteSelected() {
+    const files = getSelectedFiles();
+    if (files.length === 0) return;
+
+    const confirmed = await _showConfirmDialog(
+        'Delete ' + files.length + ' product file(s)? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    app.setState({ loading: true, error: '', success: '' });
+    try {
+        const result = await api.deleteProducts(files);
+        const deleted = result.deleted || [];
+        const errors = result.errors || [];
+        if (errors.length > 0) {
+            app.setState({
+                error: 'Deleted ' + deleted.length + ', failed: ' +
+                       errors.map(e => e.path.split('/').pop()).join(', '),
+                selectedFiles: [],
+                selectMode: false,
+                loading: false,
+            });
+        } else {
+            app.setState({
+                success: 'Deleted ' + deleted.length + ' file(s).',
+                selectedFiles: [],
+                selectMode: false,
+                loading: false,
+            });
+        }
+        // Reload the directory
+        var dir = app.getState().currentDir;
+        if (dir) await loadDirectory(dir);
+    } catch (err) {
+        app.setState({ loading: false, error: 'Delete failed: ' + err.message });
+    }
+}
+
+async function handleDeleteFile(file) {
+    const confirmed = await _showConfirmDialog(
+        'Delete "' + file.split('/').pop() + '"? This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    app.setState({ loading: true, error: '', success: '' });
+    try {
+        await api.deleteProducts([file]);
+        app.setState({ loading: false, success: 'File deleted.' });
+        var dir = app.getState().currentDir;
+        if (dir) await loadDirectory(dir);
+    } catch (err) {
+        app.setState({ loading: false, error: 'Delete failed: ' + err.message });
+    }
+}
+
+// ========== GALLERY (cards) ==========
+
 let galleryAbort = false;
 
 function renderGallery() {
     const s = app.getState();
     const grid = document.getElementById('gallery-grid');
-    const countDisplay = document.getElementById('gallery-count');
+    renderGalleryHeader();
     const progress = document.getElementById('gallery-progress');
     const progressText = document.getElementById('gallery-progress-text');
-
-    countDisplay.textContent = s.files.length + ' product(s)';
 
     if (s.files.length === 0) {
         grid.innerHTML = '<div class="empty-tab">No .prod files in this directory</div>';
@@ -625,7 +769,9 @@ async function loadGalleryCards(files) {
     // Create placeholder cards
     grid.innerHTML = files.map((f, idx) => {
         const name = f.split('/').pop().replace(/\.prod$/, '');
+        const fileEscaped = escapeHtml(f);
         return `<div class="product-card" data-file="${escapeHtml(f)}" data-gallery-idx="${idx}">
+            <div class="card-check"><span class="check-box"></span></div>
             <div class="card-thumb"><span class="no-photo">📦</span></div>
             <div class="card-body">
                 <div class="card-title">${escapeHtml(name)}</div>
@@ -784,6 +930,14 @@ function bindEvents() {
             case 'create-dir': handleShowCreateDir(); break;
             case 'do-create-dir': handleCreateSubdir(); break;
             case 'cancel-createdir': handleCancelCreateDir(); break;
+            case 'delete-selected': handleDeleteSelected(); break;
+            case 'deselect-all':
+                app.setState({ selectedFiles: [], selectMode: false });
+                break;
+            case 'sidebar-delete':
+                var delFile = btn.dataset.file;
+                if (delFile) handleDeleteFile(delFile);
+                break;
         }
     });
 
@@ -807,13 +961,34 @@ function bindEvents() {
         }
     });
 
-    // Gallery card click → editor
+    // Gallery card click → selection (Ctrl/Shift) or editor (plain click)
     body.addEventListener('click', function(e) {
         var card = e.target.closest('.product-card');
-        if (card) {
-            var file = card.dataset.file;
-            if (file) openProductEditor(file);
+        if (!card) return;
+        var file = card.dataset.file;
+        if (!file) return;
+
+        // If clicking the checkbox area or holding modifier, toggle selection
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.target.closest('.card-check')) {
+            toggleFileSelection(file, e.shiftKey, e.ctrlKey || e.metaKey);
+            return;
         }
+
+        // If in selection mode, clicking a card toggles it
+        if (app.getState().selectMode) {
+            toggleFileSelection(file, false, true);
+            return;
+        }
+
+        openProductEditor(file);
+    });
+
+    // Double-click to open even in selection mode
+    body.addEventListener('dblclick', function(e) {
+        var card = e.target.closest('.product-card');
+        if (!card) return;
+        var file = card.dataset.file;
+        if (file) openProductEditor(file);
     });
 
     // Tab switching
@@ -878,6 +1053,24 @@ function bindEvents() {
         if (e.key === 'Escape' && app.getState().showSettings) {
             closeSettings();
         }
+    });
+
+    // Escape to deselect, Delete to delete
+    body.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const s = app.getState();
+            if (s.selectMode) {
+                app.setState({ selectedFiles: [], selectMode: false });
+            }
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && app.getState().selectMode) {
+            handleDeleteSelected();
+        }
+    });
+
+    // Update card selection classes when selection state changes
+    body.addEventListener('selectionchange', function() {
+        // don't use this — we handle it via render
     });
 }
 

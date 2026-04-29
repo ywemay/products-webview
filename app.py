@@ -281,6 +281,24 @@ def api_pick_photos():
         return json_err(str(e))
 
 
+@bottle_app.post("/api/delete-products")
+def api_delete_products():
+    """Delete multiple .prod files."""
+    body = request.json or {}
+    paths = body.get("paths", [])
+    if not paths:
+        return json_err("paths is required")
+    deleted = []
+    errors = []
+    for p in paths:
+        try:
+            os.remove(p)
+            deleted.append(p)
+        except OSError as e:
+            errors.append({"path": p, "error": str(e)})
+    return json_ok({"deleted": deleted, "errors": errors})
+
+
 @bottle_app.get("/api/health")
 def api_health():
     return json_ok("ok")

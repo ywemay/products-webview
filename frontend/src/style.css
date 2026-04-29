@@ -177,6 +177,17 @@ input, select, textarea, button {
     background: var(--bg-hover);
 }
 
+.file-item:hover .file-item-actions {
+    display: flex !important;
+}
+
+.btn-xs {
+    font-size: 10px;
+    padding: 0 5px;
+    line-height: 18px;
+    min-width: 20px;
+}
+
 .file-item.selected {
     background: var(--bg-hover);
     border-left-color: var(--accent);
@@ -237,6 +248,7 @@ input, select, textarea, button {
 
 /* Product Card */
 .product-card {
+    position: relative;
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -991,4 +1003,79 @@ input, select, textarea, button {
     border: none;
     border-top: 1px solid var(--border);
     margin: 16px 0;
+}
+
+/* ========== SELECTION MODE ========== */
+
+#gallery-header.select-mode {
+    background: var(--bg-surface);
+    border-bottom: 2px solid var(--accent);
+}
+
+#gallery-header .selection-count {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 14px;
+}
+
+.btn-danger {
+    background: var(--accent-red);
+    color: #1e1e2e;
+    border: none;
+}
+.btn-danger:hover {
+    background: #e06c8a;
+}
+
+/* Card checkbox */
+.product-card .card-check {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.product-card .card-check .check-box {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border-light);
+    border-radius: 4px;
+    background: rgba(30, 30, 46, 0.6);
+    display: block;
+    transition: all 0.15s;
+}
+
+.product-card:hover .card-check .check-box {
+    border-color: var(--accent);
+}
+
+.product-card.selected .card-check .check-box {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.product-card.selected .card-check .check-box::after {
+    content: '✓';
+    display: block;
+    text-align: center;
+    line-height: 18px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #1e1e2e;
+}
+
+.product-card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.product-card.selected:hover {
+    border-color: var(--accent-hover);
+    box-shadow: 0 0 0 2px var(--accent-hover), 0 6px 20px var(--shadow);
 }

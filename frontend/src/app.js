@@ -20,6 +20,8 @@ const app = {
         error: '',
         success: '',
         fullscreenPhoto: null,
+        selectedFiles: [],
+        selectMode: false,
     },
 
     setState(updates) {
@@ -80,6 +82,7 @@ const api = {
     updateDescription:    (path, desc) =>
                                apiCall('POST', '/api/update-description',
                                        { path, description: desc }),
+    deleteProducts:        (paths) => apiCall('POST', '/api/delete-products', { paths }),
     pickDirectory:        () => apiCall('POST', '/api/pick-directory'),
     pickPhotos:           () => apiCall('POST', '/api/pick-photos'),
 };
