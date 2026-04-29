@@ -62,25 +62,16 @@ async function apiUpload(path, file) {
     return json.data;
 }
 
-// PyWebView native file dialogs — run on GTK main thread, return Promises.
-// window.pywebview.create_file_dialog(dialog_type, directory, allow_multiple)
-//   dialog_type: 10 = OPEN, 20 = FOLDER, 30 = SAVE
+// PyWebView JS API bridge — run GTK dialogs on the main thread.
+// window.pywebview.api.pickDirectory() and pickPhotos() are exposed
+// by the Api class in app.py. They return Promises.
 function callDialogApi(method) {
-    if (window.pywebview && typeof window.pywebview.create_file_dialog === 'function') {
-        console.log('[app] Using pywebview.create_file_dialog for ' + method);
-        try {
-            if (method === 'pickDirectory') {
-                return window.pywebview.create_file_dialog(20); // FOLDER
-            } else if (method === 'pickPhotos') {
-                return window.pywebview.create_file_dialog(10, '', true); // OPEN, multiple
-            }
-        } catch (err) {
-            console.error('[app] pywebview dialog failed:', err);
-            throw err;
-        }
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[method] === 'function') {
+        console.log('[app] Calling pywebview.api.' + method + '()');
+        return window.pywebview.api[method]();
     }
     // Fallback: HTTP-based GTK picker
-    console.warn('[app] pywebview dialog unavailable, using HTTP fallback');
+    console.warn('[app] pywebview.api.' + method + ' not available, using HTTP fallback');
     return apiCall('POST', '/api/' + method.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); }));
 }
 

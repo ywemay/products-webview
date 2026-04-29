@@ -240,20 +240,49 @@ def api_update_description():
 
 
 # File dialog helpers ----------------------------------------------------
-# The JS frontend uses window.pywebview.create_file_dialog() directly.
-# This is the offical pywebview API that runs on the GTK main thread
-# and returns a Promise. Much simpler than our previous GTK-from-Python
-# approach which caused thread deadlocks.
+# We expose these as methods on the Api class, which pywebview makes
+# available to JavaScript as window.pywebview.api.pickDirectory() and
+# window.pywebview.api.pickPhotos().
+#
+# From Python, we use webview.windows[0].create_file_dialog() which
+# opens the native GTK dialog on the main thread without deadlocking.
+
+
+class Api:
+    """
+    PyWebView JS API — runs on the GTK main thread.
+    Methods are called from JS as window.pywebview.api.methodName().
+    """
+
+    def pickDirectory(self):
+        log("pickDirectory: opening GTK folder chooser via pywebview...")
+        import webview
+        result = webview.windows[0].create_file_dialog(
+            webview.FOLDER_DIALOG
+        )
+        path = result[0] if result else None
+        log(f"pickDirectory: selected '{path}'")
+        return path
+
+    def pickPhotos(self):
+        log("pickPhotos: opening GTK file chooser via pywebview...")
+        import webview
+        result = webview.windows[0].create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=True
+        )
+        log(f"pickPhotos: selected {len(result) if result else 0} file(s)")
+        return result or []
 
 
 @bottle_app.post("/api/pick-directory")
 def api_pick_directory():
-    return json_err("pywebview dialog API not available, run as desktop app")
+    return json_err("use JS bridge: window.pywebview.api.pickDirectory()")
 
 
 @bottle_app.post("/api/pick-photos")
 def api_pick_photos():
-    return json_err("pywebview dialog API not available, run as desktop app")
+    return json_err("use JS bridge: window.pywebview.api.pickPhotos()")
 
 
 @bottle_app.post("/api/delete-products")
@@ -326,7 +355,8 @@ def main():
     server_thread.start()
     log("Server thread started")
 
-    # Create the WebView window
+    # Create the WebView window with a JS API object for file dialogs
+    api = Api()
     log("Creating WebView window...")
     webview.create_window(
         "Products Manager",
@@ -334,6 +364,7 @@ def main():
         width=1024,
         height=768,
         resizable=True,
+        js_api=api,
     )
 
     # Start the GUI loop (blocks until window is closed)
