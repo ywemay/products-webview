@@ -118,7 +118,7 @@ def get_price_history(path: str) -> list[dict]:
 
 
 def get_settings() -> dict:
-    """Placeholder — settings will be persisted via a small JSON file later."""
+    """Load settings from JSON file."""
     store_dir = os.path.join(os.path.dirname(__file__), "..", "data")
     os.makedirs(store_dir, exist_ok=True)
     cfg_path = os.path.join(store_dir, "settings.json")
@@ -126,7 +126,7 @@ def get_settings() -> dict:
         import json
         with open(cfg_path) as f:
             return json.load(f)
-    return {"company": "", "currency": "USD"}
+    return {"company": "", "currency": "USD", "defaultDir": ""}
 
 
 def save_settings(settings: dict) -> None:

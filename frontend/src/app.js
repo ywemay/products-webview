@@ -11,7 +11,8 @@ const app = {
         priceHistory: [],
         settings: {
             company: '',
-            currency: 'USD'
+            currency: 'USD',
+            defaultDir: ''
         },
         showSettings: false,
         showStartupDialog: false,

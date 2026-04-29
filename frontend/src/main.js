@@ -7,19 +7,22 @@
 function init() {
     render();
     bindEvents();
-    loadSettings();
 
-    var savedDir = localStorage.getItem('products-default-dir');
-    if (savedDir) {
-        // User already chose a directory — auto-open it
-        app.setState({ defaultDir: savedDir });
-        setTimeout(function() {
-            loadDirectory(savedDir);
-        }, 100);
-    } else {
-        // First launch — show the startup dialog
-        app.setState({ showStartupDialog: true });
-    }
+    // Load settings (includes saved defaultDir on server side)
+    loadSettings().then(function() {
+        var s = app.getState();
+        var savedDir = s.settings.defaultDir || '';
+        if (savedDir) {
+            // User already chose a directory — auto-open it
+            app.setState({ defaultDir: savedDir });
+            setTimeout(function() {
+                loadDirectory(savedDir);
+            }, 100);
+        } else {
+            // First launch — show the startup dialog
+            app.setState({ showStartupDialog: true });
+        }
+    });
 }
 
 // ========== LOCALSTORAGE HELPERS ==========
@@ -1120,8 +1123,8 @@ async function handleSetStartupDir() {
         return;
     }
 
-    // Persist as default directory
-    localStorage.setItem('products-default-dir', dir);
+    // Persist as default directory on server
+    await api.saveSettings({ defaultDir: dir });
     app.setState({ defaultDir: dir, showStartupDialog: false });
     await loadDirectory(dir);
 }
@@ -1146,7 +1149,6 @@ function handleNavigateSubdir(fullPath) {
         fullPath = parent;
     }
 
-    localStorage.setItem('products-default-dir', fullPath);
     app.setState({ defaultDir: fullPath });
     loadDirectory(fullPath);
 }
@@ -1155,7 +1157,6 @@ async function handleOpenDir() {
     try {
         var dir = await api.pickDirectory();
         if (!dir) return;
-        localStorage.setItem('products-default-dir', dir);
         app.setState({ defaultDir: dir });
         galleryAbort = true;
         await loadDirectory(dir);
@@ -1168,7 +1169,6 @@ async function handleOpenDir() {
     if (!dir || !dir.trim()) return;
     dir = dir.trim();
 
-    localStorage.setItem('products-default-dir', dir);
     app.setState({ defaultDir: dir });
     galleryAbort = true;
     await loadDirectory(dir);
@@ -1178,7 +1178,7 @@ function handleUpDir() {
     var s = app.getState();
     var parent = getParentDir(s.currentDir);
     if (parent) {
-        localStorage.setItem('products-default-dir', parent);
+        app.setState({ defaultDir: parent });
         app.setState({ defaultDir: parent });
         galleryAbort = true;
         loadDirectory(parent);
@@ -1474,10 +1474,8 @@ async function saveSettings() {
     }
 
     var settings = { company: company, currency: currency };
-
-    // Persist directory
     if (productsDir) {
-        localStorage.setItem('products-default-dir', productsDir);
+        settings.defaultDir = productsDir;
     }
 
     try {
