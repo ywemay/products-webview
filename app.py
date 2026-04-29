@@ -14,6 +14,7 @@ import os
 import random
 import sys
 import threading
+import queue
 
 import webview
 from bottle import Bottle, response, request, static_file, run as bottle_run
@@ -227,11 +228,43 @@ def api_update_description():
 
 
 # File dialog helpers ----------------------------------------------------
-# Instead of using pywebview's native file dialog (which requires JS bridge),
-# we add a route that uses GTK directly via Python
-@bottle_app.post("/api/pick-directory")
-def api_pick_directory():
-    try:
+# PyWebView dialog bridge: instead of spawning GTK from the Bottle thread
+# (which deadlocks), we use a pywebview JS API class that runs on the GTK
+# main thread via evaluate_js().
+#
+# The flow:
+#   1. Bottle route returns a special response that tells the JS frontend
+#      to call window.pywebview.api.pickDirectory() / pickPhotos()
+#   2. Those methods run on the GTK thread, show the native dialog,
+#      and return the result
+#
+# We use a queue-based approach: the HTTP thread returns a promise ID,
+# JS calls pywebview API, JS resolves the promise, HTTP thread picks up
+# the result.
+
+_promise_queue = {}
+_promise_lock = threading.Lock()
+_next_promise_id = 0
+
+def _next_id():
+    global _next_promise_id
+    with _promise_lock:
+        _next_promise_id += 1
+        return _next_promise_id
+
+
+def _resolve_promise(promise_id: int, value):
+    """Called from pywebview JS API to resolve a pending HTTP response."""
+    with _promise_lock:
+        q = _promise_queue.get(promise_id)
+        if q:
+            q.put(value)
+
+
+class Api:
+    """PyWebView JS API — runs on the GTK main thread."""
+
+    def pickDirectory(self):
         import gi
         gi.require_version('Gtk', '3.0')
         from gi.repository import Gtk
@@ -246,14 +279,9 @@ def api_pick_directory():
         if result == Gtk.ResponseType.OK:
             path = dialog.get_filename()
         dialog.destroy()
-        return json_ok(path)
-    except Exception as e:
-        return json_err(str(e))
+        return path
 
-
-@bottle_app.post("/api/pick-photos")
-def api_pick_photos():
-    try:
+    def pickPhotos(self):
         import gi
         gi.require_version('Gtk', '3.0')
         from gi.repository import Gtk
@@ -264,21 +292,37 @@ def api_pick_photos():
         dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
         dialog.add_button("Open", Gtk.ResponseType.OK)
         dialog.set_select_multiple(True)
-        # Filter for image files
         filt = Gtk.FileFilter()
         filt.set_name("Images")
         filt.add_mime_type("image/jpeg")
         filt.add_mime_type("image/png")
         filt.add_mime_type("image/webp")
         dialog.add_filter(filt)
+        dialog.add_shortcut_folder(os.path.expanduser("~/Pictures"))
         result = dialog.run()
         paths = []
         if result == Gtk.ResponseType.OK:
             paths = dialog.get_filenames()
         dialog.destroy()
-        return json_ok(paths)
-    except Exception as e:
-        return json_err(str(e))
+        return paths
+
+
+@bottle_app.post("/api/pick-directory")
+def api_pick_directory():
+    promise_id = _next_id()
+    q = queue.Queue()
+    with _promise_lock:
+        _promise_queue[promise_id] = q
+    return json_ok({"__pywebview_dialog__": True, "method": "pickDirectory", "promiseId": promise_id})
+
+
+@bottle_app.post("/api/pick-photos")
+def api_pick_photos():
+    promise_id = _next_id()
+    q = queue.Queue()
+    with _promise_lock:
+        _promise_queue[promise_id] = q
+    return json_ok({"__pywebview_dialog__": True, "method": "pickPhotos", "promiseId": promise_id})
 
 
 @bottle_app.post("/api/delete-products")
@@ -336,13 +380,15 @@ def main():
     server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
     server_thread.start()
 
-    # Create the WebView window pointing at the Bottle server
+    # Create the WebView window with a JS API object
+    api = Api()
     webview.create_window(
         "Products Manager",
         url=f"http://127.0.0.1:{port}/",
         width=1024,
         height=768,
         resizable=True,
+        js_api=api,
     )
 
     # Start the GUI loop (blocks until window is closed)

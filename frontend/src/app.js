@@ -61,6 +61,16 @@ async function apiUpload(path, file) {
     return json.data;
 }
 
+// PyWebView JS API — runs on main thread, safe for GTK dialogs
+function callDialogApi(method) {
+    // Direct pywebview JS API call (runs on GTK thread — no deadlock)
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[method] === 'function') {
+        return window.pywebview.api[method]();
+    }
+    // Fallback: HTTP-based GTK picker (may deadlock on some setups)
+    return apiCall('POST', '/api/' + method.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); }));
+}
+
 const api = {
     getSettings:          () => apiCall('GET',  '/api/settings'),
     saveSettings:         (s) => apiCall('POST', '/api/settings', s),
@@ -83,8 +93,8 @@ const api = {
                                apiCall('POST', '/api/update-description',
                                        { path, description: desc }),
     deleteProducts:        (paths) => apiCall('POST', '/api/delete-products', { paths }),
-    pickDirectory:        () => apiCall('POST', '/api/pick-directory'),
-    pickPhotos:           () => apiCall('POST', '/api/pick-photos'),
+    pickDirectory:        () => callDialogApi('pickDirectory'),
+    pickPhotos:           () => callDialogApi('pickPhotos'),
 };
 
 // Backward compat shim for main.js code that references window.go
