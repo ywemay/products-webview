@@ -62,13 +62,25 @@ async function apiUpload(path, file) {
     return json.data;
 }
 
-// PyWebView JS API — runs on main thread, safe for GTK dialogs
+// PyWebView native file dialogs — run on GTK main thread, return Promises.
+// window.pywebview.create_file_dialog(dialog_type, directory, allow_multiple)
+//   dialog_type: 10 = OPEN, 20 = FOLDER, 30 = SAVE
 function callDialogApi(method) {
-    // Direct pywebview JS API call (runs on GTK thread — no deadlock)
-    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[method] === 'function') {
-        return window.pywebview.api[method]();
+    if (window.pywebview && typeof window.pywebview.create_file_dialog === 'function') {
+        console.log('[app] Using pywebview.create_file_dialog for ' + method);
+        try {
+            if (method === 'pickDirectory') {
+                return window.pywebview.create_file_dialog(20); // FOLDER
+            } else if (method === 'pickPhotos') {
+                return window.pywebview.create_file_dialog(10, '', true); // OPEN, multiple
+            }
+        } catch (err) {
+            console.error('[app] pywebview dialog failed:', err);
+            throw err;
+        }
     }
-    // Fallback: HTTP-based GTK picker (may deadlock on some setups)
+    // Fallback: HTTP-based GTK picker
+    console.warn('[app] pywebview dialog unavailable, using HTTP fallback');
     return apiCall('POST', '/api/' + method.replace(/[A-Z]/g, function(m) { return '-' + m.toLowerCase(); }));
 }
 

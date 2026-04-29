@@ -1116,17 +1116,22 @@ function handleBackToGallery() {
 // ========== DIRECTORY NAVIGATION & CREATION ==========
 
 async function handleSetStartupDir() {
-    var input = document.getElementById('startup-dir-input');
-    var dir = input ? input.value.trim() : '';
-    if (!dir) {
-        app.setState({ error: 'Please enter a directory path.' });
-        return;
-    }
+    try {
+        var input = document.getElementById('startup-dir-input');
+        var dir = input ? input.value.trim() : '';
+        if (!dir) {
+            app.setState({ error: 'Please enter a directory path.' });
+            return;
+        }
 
-    // Persist as default directory on server
-    await api.saveSettings({ defaultDir: dir });
-    app.setState({ defaultDir: dir, showStartupDialog: false });
-    await loadDirectory(dir);
+        // Persist as default directory on server
+        await api.saveSettings({ defaultDir: dir });
+        app.setState({ defaultDir: dir, showStartupDialog: false });
+        await loadDirectory(dir);
+    } catch (err) {
+        console.error('handleSetStartupDir failed:', err);
+        app.setState({ loading: false, error: 'Failed to set directory: ' + (err.message || err) });
+    }
 }
 
 function handleSkipStartup() {

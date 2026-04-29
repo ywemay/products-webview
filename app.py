@@ -240,82 +240,20 @@ def api_update_description():
 
 
 # File dialog helpers ----------------------------------------------------
-# The JS frontend calls window.pywebview.api.pickDirectory() / pickPhotos()
-# directly. These methods run on the GTK main thread and are safe to call.
-# The HTTP routes (/api/pick-directory, /api/pick-photos) still exist as
-# fallbacks but are not the primary path.
-
-
-class Api:
-    """PyWebView JS API — runs on the GTK main thread."""
-
-    def pickDirectory(self):
-        log("pickDirectory: opening GTK folder chooser...")
-        try:
-            import gi
-            gi.require_version('Gtk', '3.0')
-            from gi.repository import Gtk
-            dialog = Gtk.FileChooserDialog(
-                title="Choose a directory",
-                action=Gtk.FileChooserAction.SELECT_FOLDER,
-            )
-            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-            dialog.add_button("Open", Gtk.ResponseType.OK)
-            result = dialog.run()
-            path = None
-            if result == Gtk.ResponseType.OK:
-                path = dialog.get_filename()
-                log(f"pickDirectory: user selected {path}")
-            else:
-                log("pickDirectory: user cancelled")
-            dialog.destroy()
-            return path
-        except Exception as e:
-            log_error(f"pickDirectory failed: {e}")
-            raise
-
-    def pickPhotos(self):
-        log("pickPhotos: opening GTK file chooser...")
-        try:
-            import gi
-            gi.require_version('Gtk', '3.0')
-            from gi.repository import Gtk
-            dialog = Gtk.FileChooserDialog(
-                title="Select photos",
-                action=Gtk.FileChooserAction.OPEN,
-            )
-            dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-            dialog.add_button("Open", Gtk.ResponseType.OK)
-            dialog.set_select_multiple(True)
-            filt = Gtk.FileFilter()
-            filt.set_name("Images")
-            filt.add_mime_type("image/jpeg")
-            filt.add_mime_type("image/png")
-            filt.add_mime_type("image/webp")
-            dialog.add_filter(filt)
-            dialog.add_shortcut_folder(os.path.expanduser("~/Pictures"))
-            result = dialog.run()
-            paths = []
-            if result == Gtk.ResponseType.OK:
-                paths = dialog.get_filenames()
-                log(f"pickPhotos: user selected {len(paths)} file(s)")
-            else:
-                log("pickPhotos: user cancelled")
-            dialog.destroy()
-            return paths
-        except Exception as e:
-            log_error(f"pickPhotos failed: {e}")
-            raise
+# The JS frontend uses window.pywebview.create_file_dialog() directly.
+# This is the offical pywebview API that runs on the GTK main thread
+# and returns a Promise. Much simpler than our previous GTK-from-Python
+# approach which caused thread deadlocks.
 
 
 @bottle_app.post("/api/pick-directory")
 def api_pick_directory():
-    return json_err("pywebview API not available")
+    return json_err("pywebview dialog API not available, run as desktop app")
 
 
 @bottle_app.post("/api/pick-photos")
 def api_pick_photos():
-    return json_err("pywebview API not available")
+    return json_err("pywebview dialog API not available, run as desktop app")
 
 
 @bottle_app.post("/api/delete-products")
@@ -334,6 +272,19 @@ def api_delete_products():
         except OSError as e:
             errors.append({"path": p, "error": str(e)})
     return json_ok({"deleted": deleted, "errors": errors})
+
+
+@bottle_app.post("/api/log-client-error")
+def api_log_client_error():
+    """Receive JavaScript errors from the frontend and log them."""
+    try:
+        data = request.json
+        log(f"[CLIENT {data.get('level', 'log')}] {data.get('msg', '')}")
+        if data.get('stack'):
+            log(f"  stack: {data['stack']}")
+    except Exception:
+        pass
+    return json_ok(None)
 
 
 @bottle_app.get("/api/health")
@@ -375,8 +326,7 @@ def main():
     server_thread.start()
     log("Server thread started")
 
-    # Create the WebView window with a JS API object
-    api = Api()
+    # Create the WebView window
     log("Creating WebView window...")
     webview.create_window(
         "Products Manager",
@@ -384,7 +334,6 @@ def main():
         width=1024,
         height=768,
         resizable=True,
-        js_api=api,
     )
 
     # Start the GUI loop (blocks until window is closed)
