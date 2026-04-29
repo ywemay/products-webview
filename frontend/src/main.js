@@ -1,0 +1,1323 @@
+/* Products Wails App v2.5 — Frontend logic
+ * Gallery view + 3-tab editor (Photos, Variations, Prices)
+ * Extended price fields stored in localStorage (v2.5 frontend-only)
+ * Variations stored in localStorage (awaiting backend endpoint for persistence)
+ */
+
+function init() {
+    render();
+    bindEvents();
+    loadSettings();
+
+    // Always show startup dialog on first launch
+    // (saved dir from Wails may be stale; let user confirm or change it)
+    app.setState({ showStartupDialog: true });
+
+    // Also try to load from saved dir if it exists
+    var savedDir = localStorage.getItem('products-default-dir');
+    if (savedDir) {
+        document.getElementById('startup-dir-input').value = savedDir;
+    }
+}
+
+// ========== LOCALSTORAGE HELPERS ==========
+
+function getPriceExtrasKey(productUuid, timestamp) {
+    return `price-extras-${productUuid}-${timestamp}`;
+}
+
+function getVariationsKey(productUuid) {
+    return `product-variations-${productUuid}`;
+}
+
+function loadLocalVariations(productUuid) {
+    if (!productUuid) return null;
+    const val = localStorage.getItem(getVariationsKey(productUuid));
+    return val ? JSON.parse(val) : null;
+}
+
+function saveLocalVariations(productUuid, variations) {
+    if (!productUuid) return;
+    localStorage.setItem(getVariationsKey(productUuid), JSON.stringify({
+        variations: variations,
+        savedAt: Date.now()
+    }));
+}
+
+function loadLocalPriceExtras(productUuid, timestamp) {
+    const val = localStorage.getItem(getPriceExtrasKey(productUuid, timestamp));
+    return val ? JSON.parse(val) : null;
+}
+
+function saveLocalPriceExtras(productUuid, timestamp, extras) {
+    localStorage.setItem(getPriceExtrasKey(productUuid, timestamp), JSON.stringify(extras));
+}
+
+function removeLocalPriceExtras(productUuid, timestamp) {
+    localStorage.removeItem(getPriceExtrasKey(productUuid, timestamp));
+}
+
+// ========== STARTUP DIALOG ==========
+
+function renderStartupDialog() {
+    const s = app.getState();
+    const overlay = document.getElementById('startup-overlay');
+    overlay.classList.toggle('open', s.showStartupDialog);
+
+    if (s.showStartupDialog) {
+        document.getElementById('startup-dir-input').value = s.defaultDir || '';
+        document.getElementById('startup-dir-prompt').textContent =
+            'Set your products directory to get started.';
+    }
+}
+
+// ========== CREATE DIR DIALOG ==========
+
+function renderCreateDirDialog() {
+    const s = app.getState();
+    const overlay = document.getElementById('createdir-overlay');
+    overlay.classList.toggle('open', s.showCreateDirDialog);
+
+    if (s.showCreateDirDialog) {
+        document.getElementById('createdir-name-input').value = '';
+        document.getElementById('createdir-name-input').focus();
+    }
+}
+
+// ========== SETTINGS ==========
+
+async function loadSettings() {
+    try {
+        const settings = await api.getSettings();
+        app.setState({ settings });
+    } catch (err) {
+        console.warn('Failed to load settings:', err);
+    }
+}
+
+// ========== RENDER ==========
+
+function render() {
+    renderHeader();
+    renderSettingsModal();
+    renderStartupDialog();
+    renderCreateDirDialog();
+    renderSidebar();
+    renderContent();
+    renderMessages();
+    renderPhotoOverlay();
+}
+
+function renderHeader() {
+    const s = app.getState();
+    const header = document.getElementById('header');
+    header.querySelector('.logo').textContent = '📦 Products';
+
+    const companySpan = header.querySelector('.company-display');
+    if (companySpan) {
+        companySpan.textContent = s.settings.company ? '🏢 ' + s.settings.company : '';
+    }
+}
+
+function renderSettingsModal() {
+    const s = app.getState();
+    const overlay = document.getElementById('settings-overlay');
+    overlay.classList.toggle('open', s.showSettings);
+
+    if (s.showSettings) {
+        document.getElementById('settings-company').value = s.settings.company || '';
+        document.getElementById('settings-currency').value = s.settings.currency || 'USD';
+    }
+}
+
+function renderSidebar() {
+    const s = app.getState();
+    const list = document.getElementById('file-list');
+    const dirDisplay = document.getElementById('current-dir');
+    const dirLabel = document.getElementById('dir-label');
+
+    if (s.currentDir) {
+        var parts = s.currentDir.replace(/\/+$/, '').split('/');
+        dirLabel.textContent = '📁 ' + (parts.pop() || s.currentDir);
+        dirDisplay.textContent = s.currentDir;
+        dirDisplay.style.display = 'block';
+    } else {
+        dirLabel.textContent = 'No directory selected';
+        dirDisplay.style.display = 'none';
+    }
+
+    // Update sidebar header buttons
+    var changeDirBtn = document.getElementById('sidebar-change-dir');
+    if (changeDirBtn) {
+        changeDirBtn.style.display = s.currentDir ? '' : 'none';
+    }
+    var upDirBtn = document.getElementById('sidebar-up-dir');
+    if (upDirBtn) {
+        upDirBtn.style.display = s.currentDir ? '' : 'none';
+    }
+
+    if (s.loading) {
+        list.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+        return;
+    }
+
+    if (!s.currentDir) {
+        list.innerHTML = '<div class="empty-tab">Open a directory to browse products</div>';
+        return;
+    }
+
+    var html = '';
+
+    // Parent directory link (if not at root)
+    var parentDir = getParentDir(s.currentDir);
+    if (parentDir) {
+        html += '<div class="file-item folder-item" data-subdir=".." title="Go up">' +
+            '<span class="icon">🔝</span>' +
+            '<span class="name" style="color:var(--text-muted)">..</span>' +
+            '</div>';
+    }
+
+    // Subdirectories section
+    if (s.subdirs && s.subdirs.length > 0) {
+        html += '<div class="sidebar-section-title">Folders</div>';
+        s.subdirs.forEach(function(sub) {
+            html += '<div class="file-item folder-item" data-subdir="' + escapeHtml(sub) + '" title="' + escapeHtml(s.currentDir + '/' + sub) + '">' +
+                '<span class="icon">📁</span>' +
+                '<span class="name">' + escapeHtml(sub) + '</span>' +
+                '</div>';
+        });
+    }
+
+    // Create folder button
+    html += '<div class="file-item create-folder-item" data-action="create-dir">' +
+        '<span class="icon" style="opacity:0.5">➕</span>' +
+        '<span class="name" style="color:var(--text-muted);font-style:italic">New Folder</span>' +
+        '</div>';
+    html += '<div class="sidebar-separator"></div>';
+
+    // Products section
+    html += '<div class="sidebar-section-title">Products</div>';
+
+    if (s.files.length === 0) {
+        html += '<div class="empty-tab">No .prod files found</div>';
+    } else {
+        s.files.forEach(function(f) {
+            var name = f.split('/').pop();
+            var isSelected = f === s.selectedFile;
+            html += '<div class="file-item ' + (isSelected ? 'selected' : '') + '" data-file="' + escapeHtml(f) + '">' +
+                '<span class="icon">📄</span>' +
+                '<span class="name">' + escapeHtml(name) + '</span>' +
+                '</div>';
+        });
+    }
+
+    list.innerHTML = html;
+}
+
+function renderContent() {
+    const s = app.getState();
+    const emptyState = document.getElementById('empty-state');
+    const galleryView = document.getElementById('gallery-view');
+    const detailHeader = document.getElementById('detail-header');
+    const tabs = document.getElementById('tabs');
+    const tabContent = document.getElementById('tab-content');
+    const editorNav = document.getElementById('editor-nav');
+
+    if (!s.currentDir) {
+        // No directory — show empty state
+        emptyState.style.display = 'flex';
+        galleryView.style.display = 'none';
+        detailHeader.style.display = 'none';
+        tabs.style.display = 'none';
+        tabContent.innerHTML = '';
+        tabContent.style.display = 'none';
+        editorNav.style.display = 'none';
+        return;
+    }
+
+    if (s.product && s.selectedFile) {
+        // Editor mode (product selected)
+        emptyState.style.display = 'none';
+        galleryView.style.display = 'none';
+        detailHeader.style.display = 'block';
+        tabs.style.display = 'flex';
+        tabContent.style.display = 'block';
+        editorNav.style.display = 'flex';
+        renderDetailHeader();
+        renderTabs();
+        renderEditorTabContent();
+    } else {
+        // Gallery mode (directory open, no product selected)
+        emptyState.style.display = 'none';
+        galleryView.style.display = 'flex';
+        detailHeader.style.display = 'none';
+        tabs.style.display = 'none';
+        tabContent.innerHTML = '';
+        tabContent.style.display = 'none';
+        editorNav.style.display = 'none';
+        renderGallery();
+    }
+}
+
+function renderDetailHeader() {
+    const s = app.getState();
+    const p = s.product;
+    const header = document.getElementById('detail-header');
+
+    header.innerHTML = `
+        <h2>${escapeHtml(p.title)}</h2>
+        <div class="meta">
+            <span><span class="label">Code:</span> ${escapeHtml(p.code)}</span>
+            <span><span class="label">UUID:</span> ${escapeHtml(p.uuid)}</span>
+            <span><span class="label">Photos:</span> ${p.photoCount}/25</span>
+            <span><span class="label">Prices:</span> ${p.priceCount}</span>
+        </div>
+    `;
+}
+
+function renderTabs() {
+    const s = app.getState();
+    const tabsEl = document.getElementById('tabs');
+    tabsEl.innerHTML = `
+        <button class="tab-btn ${s.activeTab === 'photos' ? 'active' : ''}" data-tab="photos">🖼️ Photos</button>
+        <button class="tab-btn ${s.activeTab === 'variations' ? 'active' : ''}" data-tab="variations">🏷️ Variations</button>
+        <button class="tab-btn ${s.activeTab === 'prices' ? 'active' : ''}" data-tab="prices">💲 Prices</button>
+        <button class="tab-btn ${s.activeTab === 'description' ? 'active' : ''}" data-tab="description">📝 Description</button>
+    `;
+}
+
+function renderEditorTabContent() {
+    const s = app.getState();
+    const container = document.getElementById('tab-content');
+
+    if (s.activeTab === 'photos') {
+        renderPhotosTab(container);
+    } else if (s.activeTab === 'variations') {
+        renderVariationsTab(container);
+    } else if (s.activeTab === 'prices') {
+        renderPricesTab(container);
+    } else if (s.activeTab === 'description') {
+        renderDescriptionTab(container);
+    }
+}
+
+// ========== PHOTOS TAB ==========
+
+function renderPhotosTab(container) {
+    const s = app.getState();
+    const p = s.product;
+
+    let html = '<div class="photo-grid">';
+
+    if (p.photos && p.photos.length > 0) {
+        p.photos.forEach((photo, idx) => {
+            html += `<div class="photo-item" data-photo-index="${idx}">
+                <img src="${photo}" alt="Photo ${idx + 1}" loading="lazy">
+                <button class="remove-btn" data-action="remove-photo" data-index="${idx}" title="Remove photo">✕</button>
+            </div>`;
+        });
+    }
+
+    html += '</div>';
+
+    if (p.photoCount < 25) {
+        var slotsLeft = 25 - p.photoCount;
+        html += `
+            <div class="form-row">
+                <div class="form-group" style="flex:3">
+                    <label>Add Photos (${slotsLeft} slots left)</label>
+                    <input type="file" id="photo-file-input" accept="image/jpeg,image/png" multiple />
+                </div>
+                <button class="btn btn-primary" id="add-photo-btn">➕ Upload</button>
+            </div>
+        `;
+    }
+
+    if (!p.photos || p.photos.length === 0) {
+        html += '<div class="empty-tab">No photos yet. Add one above.</div>';
+    }
+
+    container.innerHTML = html;
+}
+
+// ========== VARIATIONS TAB ==========
+
+function renderVariationsTab(container) {
+    const s = app.getState();
+    const p = s.product;
+
+    const localVars = loadLocalVariations(p.uuid);
+    const variations = localVars ? localVars.variations : (p.variations || []);
+    const hasLocal = localVars !== null;
+    const hasBackendVars = p.variations && p.variations.length > 0;
+
+    let html = '';
+
+    if (hasLocal) {
+        html += `<div class="variation-hint" style="border-color:rgba(249,226,175,0.3);background:rgba(249,226,175,0.08);">
+            📝 Variations are stored locally in this browser. They will be overwritten if you re-open the product.
+        </div>`;
+    } else if (!hasBackendVars) {
+        html += `<div class="variation-hint" style="border-color:rgba(166,227,161,0.2);background:rgba(166,227,161,0.08);">
+            💡 Variations help organize different product variants (e.g. size, color, weight).
+            Add your first variation below.
+        </div>`;
+    }
+
+    html += '<div class="section-header" style="margin-top:12px">Current Variations</div>';
+
+    if (variations.length === 0) {
+        html += '<div class="empty-tab" style="padding:16px">No variations defined yet.</div>';
+    } else {
+        html += '<div id="variations-list">';
+        variations.forEach((v, idx) => {
+            html += `<div class="variation-item" data-variation-idx="${idx}">
+                <span class="variation-name">🏷️ ${escapeHtml(v)}</span>
+                <button class="variation-remove" data-action="remove-variation" data-variation-idx="${idx}" title="Remove variation">✕</button>
+            </div>`;
+        });
+        html += '</div>';
+    }
+
+    html += `
+        <div class="variation-add-row">
+            <input type="text" id="new-variation-input" placeholder="e.g. Small, Red, 500ml..." />
+            <button class="btn btn-primary" id="add-variation-btn">➕ Add</button>
+        </div>
+    `;
+
+    container.innerHTML = html;
+}
+
+// ========== PRICES TAB ==========
+
+function renderPricesTab(container) {
+    const s = app.getState();
+    const p = s.product;
+
+    const localVars = loadLocalVariations(p.uuid);
+    const variations = localVars ? localVars.variations : (p.variations || []);
+    const hasLocalVars = localVars !== null;
+
+    // Add price form
+    let html = `
+        <div class="section-header">Add Price</div>
+        <div class="form-row-compact">
+            <div class="form-group form-group-small">
+                <label>Price</label>
+                <input type="number" step="0.01" min="0" id="price-input" placeholder="19.99" />
+            </div>
+            <div class="form-group form-group-small">
+                <label>Currency</label>
+                <input type="text" id="currency-input" maxlength="3" placeholder="USD" value="${escapeHtml(s.settings.currency || 'USD')}" />
+            </div>
+            <div class="form-group">
+                <label>Variation</label>
+                <select id="variation-select">
+                    <option value="">— None —</option>
+                    ${variations.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
+                </select>
+            </div>
+    `;
+
+    // Extended price fields
+    html += `
+            <div class="form-group form-group-small">
+                <label>Package</label>
+                <select id="price-package-type">
+                    <option value="">—</option>
+                    <option value="carton">Carton</option>
+                    <option value="box">Box</option>
+                    <option value="pallet">Pallet</option>
+                    <option value="bag">Bag</option>
+                    <option value="unit">Unit</option>
+                    <option value="blister-pack">Blister Pack</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="form-group form-group-small">
+                <label>Inner Pkg Ct</label>
+                <input type="number" min="0" id="price-inner-count" placeholder="0" value="0" />
+            </div>
+            <div class="form-group form-group-small">
+                <label>In/Out Ct</label>
+                <input type="number" min="0" id="price-inner-outer-count" placeholder="0" value="0" />
+            </div>
+        </div>
+        <div class="form-row-compact">
+            <div class="form-group" style="flex:1">
+                <label>Notes</label>
+                <input type="text" id="price-notes" placeholder="e.g. Bulk discount, seasonal pricing..." />
+            </div>
+            <button class="btn btn-primary" id="add-price-btn" style="margin-bottom:0;align-self:end">➕ Add Price</button>
+        </div>
+    `;
+
+    if (hasLocalVars) {
+        html += `<div class="variation-hint" style="margin-bottom:12px">
+            📝 Variations loaded from local storage. Changes to variations are not persisted to the .prod file.
+        </div>`;
+    }
+
+    // Price history table
+    html += '<div class="section-header">Price History</div>';
+
+    if (s.priceHistory && s.priceHistory.length > 0) {
+        html += `<table class="price-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Variation</th>
+                    <th>Price</th>
+                    <th>Currency</th>
+                    <th>Package</th>
+                    <th>Inner</th>
+                    <th>In/Out</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+        `;
+
+        s.priceHistory.forEach(r => {
+            const priceStr = r.price.toFixed(2);
+            const extras = loadLocalPriceExtras(p.uuid, r.timestamp);
+
+            html += `<tr>
+                <td>${escapeHtml(r.date)}</td>
+                <td>${escapeHtml(r.variation || '—')}</td>
+                <td>${priceStr}</td>
+                <td>${escapeHtml(r.currency)}</td>
+                <td>${extras && extras.packageType ? `<span class="package-tag">${escapeHtml(extras.packageType)}</span>` : '—'}</td>
+                <td>${extras && extras.innerPackageCount ? escapeHtml(String(extras.innerPackageCount)) : '—'}</td>
+                <td>${extras && extras.innerOuterCount ? escapeHtml(String(extras.innerOuterCount)) : '—'}</td>
+                <td class="price-note">${extras && extras.notes ? escapeHtml(extras.notes) : '—'}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table>`;
+    } else {
+        html += '<div class="empty-tab">No prices recorded yet.</div>';
+    }
+
+    container.innerHTML = html;
+}
+
+// ========== DESCRIPTION TAB ==========
+
+function renderDescriptionTab(container) {
+    const s = app.getState();
+    const p = s.product;
+
+    const desc = p.description || '';
+
+    let html = `
+        <div class="section-header">Product Description (Markdown)</div>
+        <div class="description-editor-wrapper">
+            <textarea id="description-editor" rows="12" placeholder="Write markdown description here...\n\n**Bold** *italic*\n- bullet list\n\n> quote">${escapeHtml(desc)}</textarea>
+        </div>
+        <div class="form-row" style="margin-top:12px">
+            <button class="btn btn-primary" id="save-description-btn">💾 Save Description</button>
+            <span id="description-status" style="margin-left:12px;font-size:0.9em"></span>
+        </div>
+        <div class="description-preview-wrapper" style="margin-top:16px">
+            <div class="section-header">Preview</div>
+            <div id="description-preview" class="markdown-preview">
+                ${renderMarkdown(desc)}
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = html;
+
+    // Wire up save button
+    document.getElementById('save-description-btn').addEventListener('click', async function() {
+        const newDesc = document.getElementById('description-editor').value;
+        document.getElementById('save-description-btn').textContent = '💾 Saving...';
+        document.getElementById('save-description-btn').disabled = true;
+        try {
+            await api.updateDescription(s.selectedFile, newDesc);
+            s.product.description = newDesc;
+            document.getElementById('description-status').textContent = '✅ Saved';
+            document.getElementById('description-status').style.color = '#a6e3a1';
+            // Update preview live
+            document.getElementById('description-preview').innerHTML = renderMarkdown(newDesc);
+        } catch (err) {
+            document.getElementById('description-status').textContent = '❌ Error: ' + err.message;
+            document.getElementById('description-status').style.color = '#f38ba8';
+        } finally {
+            document.getElementById('save-description-btn').textContent = '💾 Save Description';
+            document.getElementById('save-description-btn').disabled = false;
+        }
+    });
+
+    // Live preview on input
+    const editor = document.getElementById('description-editor');
+    editor.addEventListener('input', function() {
+        document.getElementById('description-preview').innerHTML = renderMarkdown(this.value);
+    });
+}
+
+function renderMarkdown(text) {
+    if (!text) return '<em style="color:#6c7086">No description yet</em>';
+    let html = escapeHtml(text);
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+    // Bold
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Inline code
+    html = html.replace(/`(.+?)`/g, '<code>$1</code>');
+    // Blockquote
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+    // Unordered list
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    // Ordered list
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    // Horizontal rule
+    html = html.replace(/^---$/gm, '<hr>');
+    // Line breaks
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = html.replace(/\n/g, '<br>');
+    html = '<p>' + html + '</p>';
+    // Wrap isolated <li> items in <ul>
+    html = html.replace(/(<li>.*?<\/li>(\s*<br>\s*<li>.*?<\/li>)*)/gs, '<ul>$1</ul>');
+    // Clean up empty/duplicate wraps
+    html = html.replace(/<p><ul>/g, '<ul>');
+    html = html.replace(/<\/ul><\/p>/g, '</ul>');
+    return html;
+}
+
+// ========== GALLERY ==========
+
+let galleryAbort = false;
+
+function renderGallery() {
+    const s = app.getState();
+    const grid = document.getElementById('gallery-grid');
+    const countDisplay = document.getElementById('gallery-count');
+    const progress = document.getElementById('gallery-progress');
+    const progressText = document.getElementById('gallery-progress-text');
+
+    countDisplay.textContent = s.files.length + ' product(s)';
+
+    if (s.files.length === 0) {
+        grid.innerHTML = '<div class="empty-tab">No .prod files in this directory</div>';
+        return;
+    }
+
+    progress.style.display = 'flex';
+    progressText.textContent = 'Loading product data...';
+
+    loadGalleryCards(s.files);
+}
+
+async function loadGalleryCards(files) {
+    galleryAbort = false;
+
+    const grid = document.getElementById('gallery-grid');
+    const progress = document.getElementById('gallery-progress');
+    const progressText = document.getElementById('gallery-progress-text');
+
+    // Create placeholder cards
+    grid.innerHTML = files.map((f, idx) => {
+        const name = f.split('/').pop().replace(/\.prod$/, '');
+        return `<div class="product-card" data-file="${escapeHtml(f)}" data-gallery-idx="${idx}">
+            <div class="card-thumb"><span class="no-photo">📦</span></div>
+            <div class="card-body">
+                <div class="card-title">${escapeHtml(name)}</div>
+                <div class="card-code">loading...</div>
+                <div class="card-no-price">—</div>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Load products progressively
+    for (let i = 0; i < files.length; i++) {
+        if (galleryAbort) break;
+        const file = files[i];
+        progressText.textContent = 'Loading ' + (i + 1) + '/' + files.length + '...';
+        try {
+            const product = await api.openProduct(file);
+            if (galleryAbort) break;
+            updateGalleryCard(file, product);
+        } catch (err) {
+            // Skip failed products silently
+        }
+    }
+
+    progress.style.display = 'none';
+}
+
+function updateGalleryCard(file, product) {
+    const escapedFile = CSS.escape(file);
+    const card = document.querySelector('.product-card[data-file="' + escapedFile + '"]');
+    if (!card) return;
+
+    const thumb = card.querySelector('.card-thumb');
+    const titleEl = card.querySelector('.card-title');
+    const codeEl = card.querySelector('.card-code');
+
+    // Title
+    titleEl.textContent = product.title || file.split('/').pop().replace(/\.prod$/, '');
+
+    // Code
+    codeEl.textContent = product.code || '—';
+
+    // Thumbnail (first photo)
+    if (product.photos && product.photos.length > 0) {
+        thumb.innerHTML = '<img src="' + product.photos[0] + '" alt="' + escapeHtml(product.title) + '" loading="lazy">';
+    } else {
+        thumb.innerHTML = '<span class="no-photo">📦</span>';
+    }
+
+    // Get latest price for the card
+    getLatestPriceForCard(file, card);
+}
+
+async function getLatestPriceForCard(file, card) {
+    try {
+        const history = await api.getPriceHistory(file);
+        if (galleryAbort) return;
+        if (history && history.length > 0) {
+            const latest = history[history.length - 1];
+            const priceStr = latest.price.toFixed(2);
+            const body = card.querySelector('.card-body');
+            if (body) {
+                const oldPriceEl = body.querySelector('.card-price, .card-no-price');
+                if (oldPriceEl) {
+                    oldPriceEl.outerHTML = '<div class="card-price">' + priceStr + ' <span class="currency">' + escapeHtml(latest.currency) + '</span></div>';
+                }
+            }
+        }
+    } catch (err) {
+        // No price — keep the "—" placeholder
+    }
+}
+
+// ========== GALLERY CARD CLICK → EDITOR ==========
+
+function openProductEditor(file) {
+    galleryAbort = true;
+    app.setState({
+        selectedFile: file,
+        loading: true,
+        error: '',
+        success: '',
+        priceHistory: [],
+        activeTab: 'photos'
+    });
+
+    api.openProduct(file).then(function(product) {
+        // Merge local variations if available
+        const localVars = loadLocalVariations(product.uuid);
+        if (localVars) {
+            product.variations = localVars.variations;
+        }
+        app.setState({ product: product, loading: false });
+    }).catch(function(err) {
+        app.setState({
+            product: null,
+            loading: false,
+            error: 'Failed to open product: ' + err.message
+        });
+    });
+}
+
+// ========== MESSAGES ==========
+
+function renderMessages() {
+    const s = app.getState();
+    const container = document.getElementById('messages');
+    if (s.error) {
+        container.innerHTML = '<div class="message message-error">❌ ' + escapeHtml(s.error) + '</div>';
+        setTimeout(function() { app.setState({ error: '' }); }, 5000);
+    } else if (s.success) {
+        container.innerHTML = '<div class="message message-success">✅ ' + escapeHtml(s.success) + '</div>';
+        setTimeout(function() { app.setState({ success: '' }); }, 3000);
+    } else {
+        container.innerHTML = '';
+    }
+}
+
+function renderPhotoOverlay() {
+    const s = app.getState();
+    const overlay = document.getElementById('photo-overlay');
+    if (s.fullscreenPhoto !== null && s.product && s.product.photos) {
+        overlay.innerHTML = '<img src="' + s.product.photos[s.fullscreenPhoto] + '" alt="Full size photo">';
+        overlay.classList.add('open');
+    } else {
+        overlay.classList.remove('open');
+    }
+}
+
+// ========== EVENT BINDING ==========
+
+function bindEvents() {
+    var body = document.body;
+
+    // Global data-action clicks
+    body.addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        var action = btn.dataset.action;
+
+        switch (action) {
+            case 'open-dir': handleOpenDir(); break;
+            case 'new-product': handleNewProduct(); break;
+            case 'refresh': handleRefresh(); break;
+            case 'settings': openSettings(); break;
+            case 'save-settings': saveSettings(); break;
+            case 'cancel-settings': closeSettings(); break;
+            case 'back-to-gallery': handleBackToGallery(); break;
+            case 'remove-variation':
+                var idx = parseInt(btn.dataset.variationIdx);
+                handleRemoveVariation(idx);
+                break;
+            case 'set-startup-dir': handleSetStartupDir(); break;
+            case 'skip-startup': handleSkipStartup(); break;
+            case 'change-dir': handleOpenDir(); break;
+            case 'up-dir': handleUpDir(); break;
+            case 'create-dir': handleShowCreateDir(); break;
+            case 'do-create-dir': handleCreateSubdir(); break;
+            case 'cancel-createdir': handleCancelCreateDir(); break;
+        }
+    });
+
+    // File list selection & subdirectory click
+    body.addEventListener('click', function(e) {
+        var item = e.target.closest('.file-item');
+        if (!item) return;
+
+        // Subdirectory click — navigate into it
+        var subdir = item.dataset.subdir;
+        if (subdir) {
+            var currentDir = app.getState().currentDir;
+            handleNavigateSubdir(currentDir + '/' + subdir);
+            return;
+        }
+
+        // Product file click
+        var path = item.dataset.file;
+        if (path) {
+            openProductEditor(path);
+        }
+    });
+
+    // Gallery card click → editor
+    body.addEventListener('click', function(e) {
+        var card = e.target.closest('.product-card');
+        if (card) {
+            var file = card.dataset.file;
+            if (file) openProductEditor(file);
+        }
+    });
+
+    // Tab switching
+    body.addEventListener('click', function(e) {
+        var tabBtn = e.target.closest('.tab-btn');
+        if (tabBtn) {
+            var tab = tabBtn.dataset.tab;
+            app.setState({ activeTab: tab });
+            if (tab === 'prices') {
+                loadPriceHistory();
+            }
+        }
+    });
+
+    // Photo click for fullscreen
+    body.addEventListener('click', function(e) {
+        var item = e.target.closest('.photo-item');
+        if (item && !e.target.closest('.remove-btn')) {
+            var idx = parseInt(item.dataset.photoIndex);
+            app.setState({ fullscreenPhoto: idx });
+        }
+    });
+
+    // Photo overlay close
+    document.getElementById('photo-overlay').addEventListener('click', function() {
+        app.setState({ fullscreenPhoto: null });
+    });
+
+    // Remove photo
+    body.addEventListener('click', async function(e) {
+        var btn = e.target.closest('[data-action="remove-photo"]');
+        if (!btn) return;
+        await handleRemovePhoto(parseInt(btn.dataset.index));
+    });
+
+    // Add photo
+    body.addEventListener('click', async function(e) {
+        if (e.target.id === 'add-photo-btn') await handleAddPhoto();
+    });
+
+    // Add price
+    body.addEventListener('click', async function(e) {
+        if (e.target.id === 'add-price-btn') await handleAddPrice();
+    });
+
+    // Add variation
+    body.addEventListener('click', async function(e) {
+        if (e.target.id === 'add-variation-btn') await handleAddVariation();
+    });
+
+    // Enter key shortcuts
+    body.addEventListener('keydown', async function(e) {
+        if (e.key === 'Enter') {
+            if (e.target.id === 'photo-path-input') await handleAddPhoto();
+            if (e.target.id === 'price-input' || e.target.id === 'price-notes') await handleAddPrice();
+            if (e.target.id === 'new-variation-input') await handleAddVariation();
+        }
+    });
+
+    // Close settings with Escape
+    body.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && app.getState().showSettings) {
+            closeSettings();
+        }
+    });
+}
+
+// ========== HANDLERS ==========
+
+function handleBackToGallery() {
+    app.setState({
+        product: null,
+        selectedFile: '',
+        activeTab: 'photos',
+        priceHistory: []
+    });
+}
+
+// ========== DIRECTORY NAVIGATION & CREATION ==========
+
+async function handleSetStartupDir() {
+    var input = document.getElementById('startup-dir-input');
+    var dir = input ? input.value.trim() : '';
+    if (!dir) {
+        app.setState({ error: 'Please enter a directory path.' });
+        return;
+    }
+
+    // Persist as default directory
+    localStorage.setItem('products-default-dir', dir);
+    app.setState({ defaultDir: dir, showStartupDialog: false });
+    await loadDirectory(dir);
+}
+
+function handleSkipStartup() {
+    app.setState({ showStartupDialog: false });
+}
+
+function getParentDir(dir) {
+    if (!dir || dir === '/' || dir === '') return null;
+    var normalized = dir.replace(/\/+$/, '');
+    var idx = normalized.lastIndexOf('/');
+    if (idx <= 0) return '/';
+    return normalized.substring(0, idx);
+}
+
+function handleNavigateSubdir(fullPath) {
+    // Handle ".." — navigate to parent
+    if (fullPath.endsWith('/..')) {
+        var parent = getParentDir(app.getState().currentDir);
+        if (!parent) return;
+        fullPath = parent;
+    }
+
+    localStorage.setItem('products-default-dir', fullPath);
+    app.setState({ defaultDir: fullPath });
+    loadDirectory(fullPath);
+}
+
+async function handleOpenDir() {
+    var dir = await _showPromptDialog('Enter directory path containing .prod files:');
+    if (!dir || !dir.trim()) return;
+    dir = dir.trim();
+
+    localStorage.setItem('products-default-dir', dir);
+    app.setState({ defaultDir: dir });
+    galleryAbort = true;
+    await loadDirectory(dir);
+}
+
+function handleUpDir() {
+    var s = app.getState();
+    var parent = getParentDir(s.currentDir);
+    if (parent) {
+        localStorage.setItem('products-default-dir', parent);
+        app.setState({ defaultDir: parent });
+        galleryAbort = true;
+        loadDirectory(parent);
+    }
+}
+
+function handleShowCreateDir() {
+    app.setState({ showCreateDirDialog: true });
+}
+
+function handleCancelCreateDir() {
+    app.setState({ showCreateDirDialog: false });
+}
+
+async function handleCreateSubdir() {
+    var s = app.getState();
+    if (!s.currentDir) {
+        app.setState({ error: 'No current directory. Open one first.', showCreateDirDialog: false });
+        return;
+    }
+
+    var input = document.getElementById('createdir-name-input');
+    var name = input ? input.value.trim() : '';
+    if (!name) {
+        app.setState({ error: 'Please enter a folder name.' });
+        return;
+    }
+
+    try {
+        var subdir = await api.createSubdir(s.currentDir, name);
+        app.setState({ showCreateDirDialog: false, success: 'Folder "' + name + '" created.' });
+        await loadDirectory(s.currentDir);
+    } catch (err) {
+        app.setState({ error: 'Failed to create folder: ' + err.message });
+    }
+}
+
+async function handleRefresh() {
+    var dir = app.getState().currentDir;
+    if (dir) {
+        galleryAbort = true;
+        await loadDirectory(dir);
+    }
+}
+
+async function loadDirectory(dir) {
+    app.setState({
+        loading: true,
+        error: '',
+        success: '',
+        selectedFile: '',
+        product: null,
+        priceHistory: []
+    });
+    try {
+        var [files, subdirs] = await Promise.all([
+            api.listProducts(dir),
+            api.listSubdirs(dir)
+        ]);
+        app.setState({ currentDir: dir, files: files || [], subdirs: subdirs || [], loading: false });
+    } catch (err) {
+        app.setState({ currentDir: dir, files: [], subdirs: [], loading: false, error: 'Failed to load directory: ' + err.message });
+    }
+}
+
+async function handleNewProduct() {
+    var s = app.getState();
+
+    var code = await _showPromptDialog('Product code (leave empty for auto-generate):', '');
+
+    var path;
+    if (s.currentDir) {
+        var name = (code && code.trim()) || 'new-product';
+        path = s.currentDir.replace(/\/+$/, '') + '/' + name + '.prod';
+    } else {
+        path = await _showPromptDialog('Enter path for new product (e.g. /path/to/product.prod):');
+        if (!path) return;
+    }
+
+    var title = await _showPromptDialog('Product title:');
+    if (!title) return;
+
+    app.setState({ loading: true, error: '' });
+
+    try {
+        var product = await api.createProduct(path, title, code || '');
+        app.setState({
+            product: product,
+            selectedFile: path,
+            loading: false,
+            success: 'Product created: ' + title,
+            activeTab: 'photos',
+            priceHistory: []
+        });
+        if (s.currentDir && path.startsWith(s.currentDir)) {
+            await loadDirectory(s.currentDir);
+        }
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to create product: ' + err.message });
+    }
+}
+
+async function handleAddPhoto() {
+    var s = app.getState();
+    var input = document.getElementById('photo-file-input');
+    if (!input || !input.files || input.files.length === 0) {
+        app.setState({ error: 'Please select photo file(s) to upload.' });
+        return;
+    }
+    if (!s.selectedFile || !s.product) { app.setState({ error: 'No product selected.' }); return; }
+
+    var slotsLeft = 25 - s.product.photoCount;
+    var filesToUpload = Array.from(input.files).slice(0, slotsLeft);
+    if (filesToUpload.length === 0) {
+        app.setState({ error: 'Photo limit reached (max 25).' });
+        return;
+    }
+
+    app.setState({ loading: true, error: '', success: '' });
+
+    try {
+        for (var f of filesToUpload) {
+            await api.uploadPhotos(s.selectedFile, f);
+        }
+
+        input.value = '';
+        var product = await api.openProduct(s.selectedFile);
+        var localVars = loadLocalVariations(product.uuid);
+        if (localVars) product.variations = localVars.variations;
+        var count = filesToUpload.length;
+        app.setState({ product: product, loading: false, success: count + ' photo(s) added.' });
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to add photo(s): ' + err.message });
+    }
+}
+
+async function handleRemovePhoto(idx) {
+    var s = app.getState();
+    if (!s.selectedFile || !s.product) { app.setState({ error: 'No product selected.' }); return; }
+    var confirmed = await _showConfirmDialog('Remove photo ' + (idx + 1) + '?');
+    if (!confirmed) return;
+
+    app.setState({ loading: true, error: '', success: '' });
+    try {
+        await api.removePhoto(s.selectedFile, idx);
+        var product = await api.openProduct(s.selectedFile);
+        var localVars = loadLocalVariations(product.uuid);
+        if (localVars) product.variations = localVars.variations;
+        app.setState({ product: product, loading: false, success: 'Photo removed.' });
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to remove photo: ' + err.message });
+    }
+}
+
+// ========== VARIATIONS HANDLERS ==========
+
+function getCurrentProductVariations() {
+    var s = app.getState();
+    if (!s.product) return [];
+    var localVars = loadLocalVariations(s.product.uuid);
+    return localVars ? localVars.variations : (s.product.variations || []);
+}
+
+async function handleAddVariation() {
+    var s = app.getState();
+    if (!s.product) { app.setState({ error: 'No product selected.' }); return; }
+
+    var input = document.getElementById('new-variation-input');
+    var name = input ? input.value.trim() : '';
+    if (!name) { app.setState({ error: 'Please enter a variation name.' }); return; }
+
+    var current = getCurrentProductVariations();
+    if (current.indexOf(name) !== -1) {
+        app.setState({ error: 'Variation "' + name + '" already exists.' });
+        return;
+    }
+
+    current.push(name);
+    saveLocalVariations(s.product.uuid, current);
+
+    var updatedProduct = Object.assign({}, s.product, { variations: current });
+    app.setState({ product: updatedProduct, activeTab: 'variations', success: 'Variation "' + name + '" added (local).' });
+
+    input.value = '';
+}
+
+async function handleRemoveVariation(idx) {
+    var s = app.getState();
+    if (!s.product) { app.setState({ error: 'No product selected.' }); return; }
+
+    var current = getCurrentProductVariations();
+    if (idx < 0 || idx >= current.length) return;
+
+    var removed = current[idx];
+    current.splice(idx, 1);
+    saveLocalVariations(s.product.uuid, current);
+
+    var updatedProduct = Object.assign({}, s.product, { variations: current });
+    app.setState({ product: updatedProduct, activeTab: 'variations', success: 'Variation "' + removed + '" removed (local).' });
+}
+
+// ========== PRICE HANDLERS ==========
+
+async function handleAddPrice() {
+    var s = app.getState();
+    if (!s.selectedFile || !s.product) { app.setState({ error: 'No product selected.' }); return; }
+
+    var priceInput = document.getElementById('price-input');
+    var currencyInput = document.getElementById('currency-input');
+    var variationSelect = document.getElementById('variation-select');
+    var packageTypeInput = document.getElementById('price-package-type');
+    var innerCountInput = document.getElementById('price-inner-count');
+    var innerOuterInput = document.getElementById('price-inner-outer-count');
+    var notesInput = document.getElementById('price-notes');
+
+    var price = parseFloat(priceInput ? priceInput.value : '');
+    if (isNaN(price) || price <= 0) { app.setState({ error: 'Please enter a valid price.' }); return; }
+
+    var currency = (currencyInput ? currencyInput.value : s.settings.currency || 'USD').toUpperCase().trim();
+    if (currency.length !== 3) { app.setState({ error: 'Currency must be 3 letters (e.g. USD).' }); return; }
+
+    var variation = variationSelect ? variationSelect.value : '';
+    var packageType = packageTypeInput ? packageTypeInput.value : '';
+    var innerCount = innerCountInput ? parseInt(innerCountInput.value) || 0 : 0;
+    var innerOuter = innerOuterInput ? parseInt(innerOuterInput.value) || 0 : 0;
+    var notes = notesInput ? notesInput.value.trim() : '';
+
+    app.setState({ loading: true, error: '', success: '' });
+    try {
+        await api.addPrice(s.selectedFile, currency, variation, price);
+
+        // After successful add, store the extra fields in localStorage
+        var history = await api.getPriceHistory(s.selectedFile);
+        if (history && history.length > 0) {
+            var latest = history[history.length - 1];
+            if (packageType || innerCount > 0 || innerOuter > 0 || notes) {
+                saveLocalPriceExtras(s.product.uuid, latest.timestamp, {
+                    packageType: packageType,
+                    innerPackageCount: innerCount,
+                    innerOuterCount: innerOuter,
+                    notes: notes
+                });
+            }
+        }
+
+        // Clear form
+        if (priceInput) priceInput.value = '';
+        if (notesInput) notesInput.value = '';
+        if (packageTypeInput) packageTypeInput.value = '';
+        if (innerCountInput) innerCountInput.value = '0';
+        if (innerOuterInput) innerOuterInput.value = '0';
+
+        // Reload product and price history
+        var product = await api.openProduct(s.selectedFile);
+        var localVars = loadLocalVariations(product.uuid);
+        if (localVars) product.variations = localVars.variations;
+
+        app.setState({ product: product, priceHistory: history, loading: false, success: 'Added ' + currency + ' ' + price.toFixed(2) });
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to add price: ' + err.message });
+    }
+}
+
+async function loadPriceHistory() {
+    var s = app.getState();
+    if (!s.selectedFile) return;
+    try {
+        var history = await api.getPriceHistory(s.selectedFile);
+        app.setState({ priceHistory: history || [] });
+    } catch (err) {
+        console.warn('Failed to load price history:', err);
+    }
+}
+
+// ========== SETTINGS ==========
+
+function openSettings() {
+    app.setState({ showSettings: true });
+}
+
+function closeSettings() {
+    app.setState({ showSettings: false });
+}
+
+async function saveSettings() {
+    var company = document.getElementById('settings-company').value.trim();
+    var currency = document.getElementById('settings-currency').value.trim().toUpperCase();
+    if (currency.length !== 3) {
+        app.setState({ error: 'Currency must be 3 letters (e.g. USD).' });
+        return;
+    }
+
+    var settings = { company: company, currency: currency };
+    try {
+        await api.saveSettings(settings);
+        app.setState({ settings: settings, showSettings: false, success: 'Settings saved.' });
+    } catch (err) {
+        app.setState({ error: 'Failed to save settings: ' + err.message });
+    }
+}
+
+// ========== UTILITY ==========
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// ========== WEBKIT DIALOG SHIM ==========
+// WebKitGTK 2.50+ silently returns null for prompt() and false for confirm().
+// Replace with custom implementations that work in any browser/WebView.
+
+var _confirmCallback = null;
+
+function _showConfirmDialog(msg) {
+    return new Promise(function(resolve) {
+        var overlay = document.getElementById('confirm-overlay');
+        var messageEl = document.getElementById('confirm-message');
+        var yesBtn = document.getElementById('confirm-yes');
+        var noBtn = document.getElementById('confirm-no');
+
+        messageEl.textContent = msg;
+        overlay.classList.add('open');
+
+        function cleanup(result) {
+            overlay.classList.remove('open');
+            resolve(result);
+        }
+
+        yesBtn.onclick = function() { cleanup(true); };
+        noBtn.onclick = function() { cleanup(false); };
+    });
+}
+
+function _showPromptDialog(msg, defaultVal) {
+    return new Promise(function(resolve) {
+        var overlay = document.getElementById('prompt-overlay');
+        var messageEl = document.getElementById('prompt-message');
+        var inputEl = document.getElementById('prompt-input');
+        var okBtn = document.getElementById('prompt-ok');
+        var cancelBtn = document.getElementById('prompt-cancel');
+
+        messageEl.textContent = msg;
+        inputEl.value = defaultVal || '';
+        overlay.classList.add('open');
+
+        function cleanup(result) {
+            overlay.classList.remove('open');
+            resolve(result);
+        }
+
+        okBtn.onclick = function() { cleanup(inputEl.value); };
+        cancelBtn.onclick = function() { cleanup(null); };
+        inputEl.onkeydown = function(e) {
+            if (e.key === 'Enter') okBtn.click();
+            if (e.key === 'Escape') cancelBtn.click();
+        };
+
+        setTimeout(function() { inputEl.focus(); }, 100);
+    });
+}
+
+// Override the native synchronous prompt/confirm with async versions
+// Usage: await _showPromptDialog(...), await _showConfirmDialog(...)
+
+// ========== STARTUP ==========
+document.addEventListener('DOMContentLoaded', init);

@@ -1,0 +1,138 @@
+"""Backend store ─ the high-level CRUD layer used by the WebView frontend."""
+
+import os
+import base64
+
+from .core import Product, PriceRecord
+
+
+def _make_thumbnail(data: bytes, max_size: int = 120) -> str:
+    """Return a base64 data-URL (no server-side resize; we send the JPEG data
+    and let the browser handle it).  For large images, clientside CSS will
+    constrain the card thumbnail to 120px.
+    """
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode("ascii")
+
+
+def list_products(dir_path: str) -> list[str]:
+    """Return full paths of .prod files under dir_path."""
+    try:
+        entries = os.listdir(dir_path)
+    except FileNotFoundError:
+        return []
+    result = []
+    for name in entries:
+        if name.endswith(".prod") and os.path.isfile(os.path.join(dir_path, name)):
+            result.append(os.path.join(dir_path, name))
+    return result
+
+
+def list_subdirs(dir_path: str) -> list[str]:
+    """Return directory names (not full paths) of subdirectories under dir_path."""
+    try:
+        entries = os.listdir(dir_path)
+    except FileNotFoundError:
+        return []
+    return [e for e in sorted(entries)
+            if os.path.isdir(os.path.join(dir_path, e))]
+
+
+def create_subdir(parent_dir: str, name: str) -> str:
+    """Create a subdirectory. Returns the full path."""
+    full = os.path.join(parent_dir, name)
+    os.makedirs(full, exist_ok=True)
+    return full
+
+
+def open_product(path: str) -> dict:
+    """Open a .prod file and return a JSON-serialisable info dict."""
+    p = Product.open(path)
+    return {
+        "title": p.header.title,
+        "uuid": p.header.uuid,
+        "code": p.header.code,
+        "description": p.header.description,
+        "variations": p.header.variations,
+        "photoCount": len(p.photos),
+        "priceCount": len(p.price_history),
+        "photos": [_make_thumbnail(d) for d in p.photos],
+    }
+
+
+def create_product(path: str, title: str, code: str,
+                   description: str) -> dict:
+    """Create a new .prod file and return its info."""
+    Product.create(path, title=title, code=code, description=description)
+    return open_product(path)
+
+
+def add_price(path: str, currency: str, variation: str,
+              price: float) -> None:
+    p = Product.open(path)
+    import time
+    var_idx = -1
+    if variation:
+        for i, v in enumerate(p.header.variations):
+            if v == variation:
+                var_idx = i
+                break
+    pr = PriceRecord(
+        timestamp=int(time.time()),
+        variation_index=var_idx,
+        price_hundredths=int(price * 100 + 0.5),
+        currency=currency,
+    )
+    p.add_price(pr)
+    p.save(path)
+
+
+def add_photo(path: str, photo_path: str) -> None:
+    p = Product.open(path)
+    with open(photo_path, "rb") as f:
+        data = f.read()
+    p.add_photo(data)
+    p.save(path)
+
+
+def remove_photo(path: str, index: int) -> None:
+    p = Product.open(path)
+    p.remove_photo(index)
+    p.save(path)
+
+
+def get_price_history(path: str) -> list[dict]:
+    p = Product.open(path)
+    from datetime import datetime
+    return [
+        {
+            "timestamp": rec.timestamp,
+            "date": datetime.utcfromtimestamp(rec.timestamp).isoformat(),
+            "variation": (p.header.variations[rec.variation_index]
+                          if 0 <= rec.variation_index < len(p.header.variations)
+                          else ""),
+            "price": rec.price_hundredths / 100.0,
+            "currency": rec.currency,
+        }
+        for rec in p.price_history
+    ]
+
+
+def get_settings() -> dict:
+    """Placeholder — settings will be persisted via a small JSON file later."""
+    store_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    os.makedirs(store_dir, exist_ok=True)
+    cfg_path = os.path.join(store_dir, "settings.json")
+    if os.path.exists(cfg_path):
+        import json
+        with open(cfg_path) as f:
+            return json.load(f)
+    return {"company": "", "currency": "USD"}
+
+
+def save_settings(settings: dict) -> None:
+    store_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    os.makedirs(store_dir, exist_ok=True)
+    cfg_path = os.path.join(store_dir, "settings.json")
+    import json
+    with open(cfg_path, "w") as f:
+        json.dump(settings, f)

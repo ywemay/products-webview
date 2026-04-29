@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Products</title>
+    <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <div id="header">
+            <span class="logo">📦 Products</span>
+            <span class="company-display"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" data-action="open-dir">📂 Open</button>
+            <button class="btn btn-primary btn-sm" data-action="new-product">✨ New</button>
+            <button class="btn btn-sm" data-action="refresh">🔄</button>
+            <button class="btn btn-sm" data-action="settings">⚙️</button>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages"></div>
+
+        <!-- Main Content -->
+        <div id="main">
+            <!-- Sidebar -->
+            <div id="sidebar">
+                <div id="sidebar-header">
+                    <span id="dir-label" class="title">No directory selected</span>
+                    <span id="current-dir" class="dir-path" style="display:none"></span>
+                    <span class="spacer" style="flex:1"></span>
+                    <button id="sidebar-up-dir" class="btn btn-sm" data-action="up-dir" title="Go up one level" style="display:none;font-size:14px;padding:2px 6px">⬆</button>
+                    <button id="sidebar-change-dir" class="btn btn-sm" data-action="change-dir" title="Change directory" style="display:none;font-size:14px;padding:2px 6px">📂</button>
+                </div>
+                <div id="file-list">
+                    <div class="empty-tab">Open a directory to browse products</div>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div id="content">
+                <!-- Empty State -->
+                <div id="empty-state">
+                    <div class="icon">📦</div>
+                    <p>
+                        Open a directory to browse .prod files,<br>
+                        or create a new product with the <strong>New</strong> button.
+                    </p>
+                    <p style="margin-top:12px;font-size:12px;color:var(--text-muted)">
+                        Set your company name and default currency in ⚙️ Settings.
+                    </p>
+                </div>
+
+                <!-- Gallery View (shown when dir loaded, no product selected) -->
+                <div id="gallery-view" style="display:none">
+                    <div id="gallery-header">
+                        <span id="gallery-count"></span>
+                        <span class="gallery-notice">Click a product card to open the editor</span>
+                    </div>
+                    <div id="gallery-grid"></div>
+                    <div id="gallery-progress" style="display:none">
+                        <div class="spinner"></div>
+                        <span id="gallery-progress-text">Loading products...</span>
+                    </div>
+                </div>
+
+                <!-- Detail / Editor View -->
+                <div id="detail-header" style="display:none"></div>
+                <div id="tabs" style="display:none"></div>
+                <div id="tab-content" style="display:none"></div>
+
+                <!-- Back to gallery button (shown in editor) -->
+                <div id="editor-nav" style="display:none">
+                    <button data-action="back-to-gallery" class="btn btn-sm">
+                        ← Back to Gallery
+                    </button>
+                    <span id="no-backend-warning" class="badge badge-warning" style="display:none">
+                        ⚠️ Some changes are stored locally only
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Startup Dialog (shown when no default directory) -->
+        <div id="startup-overlay" class="modal-overlay">
+            <div class="modal">
+                <h3>📂 Welcome to Products</h3>
+                <p id="startup-dir-prompt" style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+                    Choose a directory to store your .prod files.
+                </p>
+                <div class="form-group">
+                    <label>Products Directory</label>
+                    <input type="text" id="startup-dir-input" placeholder="/home/user/products" />
+                </div>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:8px">
+                    You can change this later using the <strong>Open</strong> button.
+                </p>
+                <div class="modal-actions">
+                    <button class="btn" data-action="skip-startup">Skip</button>
+                    <button class="btn btn-primary" data-action="set-startup-dir">Set &amp; Open</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Subdirectory Dialog -->
+        <div id="createdir-overlay" class="modal-overlay">
+            <div class="modal">
+                <h3>📁 New Folder</h3>
+                <div class="form-group">
+                    <label>Folder Name</label>
+                    <input type="text" id="createdir-name-input" placeholder="e.g. Electronics, 2026-Q1, ..." />
+                </div>
+                <div class="modal-actions">
+                    <button class="btn" data-action="cancel-createdir">Cancel</button>
+                    <button class="btn btn-primary" data-action="do-create-dir">Create</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Photo Fullscreen Overlay -->
+        <div id="photo-overlay"></div>
+
+        <!-- Settings Modal -->
+        <div id="settings-overlay" class="modal-overlay">
+            <div class="modal">
+                <h3>⚙️ Settings</h3>
+                <div class="form-group">
+                    <label>Company Name</label>
+                    <input type="text" id="settings-company" placeholder="Your company name" />
+                </div>
+                <div class="form-group">
+                    <label>Default Currency</label>
+                    <input type="text" id="settings-currency" maxlength="3" placeholder="USD" value="USD" />
+                </div>
+                <div class="modal-actions">
+                    <button class="btn" data-action="cancel-settings">Cancel</button>
+                    <button class="btn btn-primary" data-action="save-settings">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Confirm Dialog (WebKitGTK 2.50+ blocks native confirm/prompt) -->
+        <div id="confirm-overlay" class="modal-overlay" style="z-index:1000">
+            <div class="modal" style="min-width:300px;text-align:center">
+                <p id="confirm-message" style="margin:16px 0;font-size:14px;color:var(--text-primary)"></p>
+                <div class="modal-actions" style="justify-content:center;gap:12px">
+                    <button id="confirm-yes" class="btn btn-primary">Yes</button>
+                    <button id="confirm-no" class="btn">No</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom Prompt Dialog -->
+        <div id="prompt-overlay" class="modal-overlay" style="z-index:1000">
+            <div class="modal" style="min-width:360px">
+                <p id="prompt-message" style="margin:0 0 12px;font-size:14px;color:var(--text-primary)"></p>
+                <div class="form-group">
+                    <input type="text" id="prompt-input" style="width:100%" />
+                </div>
+                <div class="modal-actions" style="justify-content:flex-end;gap:8px;margin-top:12px">
+                    <button id="prompt-cancel" class="btn">Cancel</button>
+                    <button id="prompt-ok" class="btn btn-primary">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="src/app.js"></script>
+    <script src="src/main.js"></script>
+</body>
+</html>
