@@ -9,14 +9,16 @@ function init() {
     bindEvents();
     loadSettings();
 
-    // Always show startup dialog on first launch
-    // (saved dir from Wails may be stale; let user confirm or change it)
-    app.setState({ showStartupDialog: true });
-
-    // Also try to load from saved dir if it exists
     var savedDir = localStorage.getItem('products-default-dir');
     if (savedDir) {
-        document.getElementById('startup-dir-input').value = savedDir;
+        // User already chose a directory — auto-open it
+        app.setState({ defaultDir: savedDir });
+        setTimeout(function() {
+            loadDirectory(savedDir);
+        }, 100);
+    } else {
+        // First launch — show the startup dialog
+        app.setState({ showStartupDialog: true });
     }
 }
 
@@ -157,6 +159,7 @@ function renderSettingsModal() {
     if (s.showSettings) {
         document.getElementById('settings-company').value = s.settings.company || '';
         document.getElementById('settings-currency').value = s.settings.currency || 'USD';
+        document.getElementById('settings-products-dir').value = s.defaultDir || '';
     }
 }
 
@@ -931,9 +934,19 @@ function bindEvents() {
                         document.getElementById('startup-dir-input').value = dir;
                     }
                 }).catch(function(err) {
-                    // fallback: just use prompt dialog
                     _showPromptDialog('Enter directory path:').then(function(d) {
                         if (d) document.getElementById('startup-dir-input').value = d;
+                    });
+                });
+                break;
+            case 'browse-settings-dir':
+                api.pickDirectory().then(function(dir) {
+                    if (dir) {
+                        document.getElementById('settings-products-dir').value = dir;
+                    }
+                }).catch(function(err) {
+                    _showPromptDialog('Enter directory path:').then(function(d) {
+                        if (d) document.getElementById('settings-products-dir').value = d;
                     });
                 });
                 break;
@@ -1453,15 +1466,34 @@ function closeSettings() {
 async function saveSettings() {
     var company = document.getElementById('settings-company').value.trim();
     var currency = document.getElementById('settings-currency').value.trim().toUpperCase();
+    var productsDir = document.getElementById('settings-products-dir').value.trim();
+
     if (currency.length !== 3) {
         app.setState({ error: 'Currency must be 3 letters (e.g. USD).' });
         return;
     }
 
     var settings = { company: company, currency: currency };
+
+    // Persist directory
+    if (productsDir) {
+        localStorage.setItem('products-default-dir', productsDir);
+    }
+
     try {
         await api.saveSettings(settings);
-        app.setState({ settings: settings, showSettings: false, success: 'Settings saved.' });
+        app.setState({
+            settings: settings,
+            defaultDir: productsDir,
+            showSettings: false,
+            success: 'Settings saved.',
+        });
+
+        // If directory changed, reload it
+        if (productsDir && productsDir !== app.getState().currentDir) {
+            galleryAbort = true;
+            loadDirectory(productsDir);
+        }
     } catch (err) {
         app.setState({ error: 'Failed to save settings: ' + err.message });
     }
