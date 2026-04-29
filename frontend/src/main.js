@@ -925,6 +925,18 @@ function bindEvents() {
                 break;
             case 'set-startup-dir': handleSetStartupDir(); break;
             case 'skip-startup': handleSkipStartup(); break;
+            case 'browse-startup-dir':
+                api.pickDirectory().then(function(dir) {
+                    if (dir) {
+                        document.getElementById('startup-dir-input').value = dir;
+                    }
+                }).catch(function(err) {
+                    // fallback: just use prompt dialog
+                    _showPromptDialog('Enter directory path:').then(function(d) {
+                        if (d) document.getElementById('startup-dir-input').value = d;
+                    });
+                });
+                break;
             case 'change-dir': handleOpenDir(); break;
             case 'up-dir': handleUpDir(); break;
             case 'create-dir': handleShowCreateDir(); break;
@@ -1127,6 +1139,18 @@ function handleNavigateSubdir(fullPath) {
 }
 
 async function handleOpenDir() {
+    try {
+        var dir = await api.pickDirectory();
+        if (!dir) return;
+        localStorage.setItem('products-default-dir', dir);
+        app.setState({ defaultDir: dir });
+        galleryAbort = true;
+        await loadDirectory(dir);
+        return;
+    } catch (err) {
+        // GTK dialog failed — fallback to text prompt
+    }
+
     var dir = await _showPromptDialog('Enter directory path containing .prod files:');
     if (!dir || !dir.trim()) return;
     dir = dir.trim();

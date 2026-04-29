@@ -721,6 +721,15 @@ input, select, textarea, button {
     gap: 4px;
 }
 
+.input-with-btn {
+    display: flex;
+    gap: 6px;
+}
+
+.input-with-btn input {
+    flex: 1;
+}
+
 .form-group label {
     font-size: 12px;
     color: var(--text-muted);
