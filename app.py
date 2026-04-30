@@ -403,6 +403,7 @@ def api_save_company():
         c.name = company_data.get("name", "")
         c.address = company_data.get("address", "")
         c.website = company_data.get("website", "")
+        c.company_type = company_data.get("company_type", "")
         c.emails = company_data.get("emails", [])
         c.phones = company_data.get("phones", [])
         for cd in company_data.get("contacts", []):
