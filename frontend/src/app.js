@@ -25,6 +25,8 @@ const app = {
         selectMode: false,
         lastSelectedIndex: -1,
         clipboard: null,  // { action: 'copy'|'cut', files: [...] }
+        searchQuery: '',
+        searchResults: null, // null = not searching, [] = no results, [items] = results
     },
 
     setState(updates) {

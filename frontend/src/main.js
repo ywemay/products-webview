@@ -752,12 +752,22 @@ function renderGalleryHeader() {
         if (folderCount > 0 && fileCount > 0) text += ' · ';
         if (fileCount > 0) text += fileCount + ' product(s)';
         if (!text) text = 'empty';
+        var isSearching = s.searchQuery && s.searchQuery.length > 0;
         var pasteHtml = clipboard ? ' <button class="btn btn-sm" data-action="paste-files">📋 Paste (' + clipboard.files.length + ')</button>' : '';
         header.innerHTML = `
-            <span id="gallery-count">${text}</span>
-            <span class="gallery-notice">Click folder to navigate, product to edit; Ctrl+click to multi-select</span>
+            <span id="gallery-count">${isSearching ? '🔍 ' + s.searchResults.length + ' result(s)' : text}</span>
+            <div class="gallery-search" style="flex:1;max-width:300px;margin:0 12px">
+                <input type="text" id="search-input" placeholder="🔍 Search products..." value="${escapeHtml(s.searchQuery)}"
+                    style="width:100%;padding:4px 8px;font-size:13px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text-primary);outline:none" />
+            </div>
+            <span class="gallery-notice">${isSearching ? '' : 'Click folder to navigate, product to edit; Ctrl+click to select'}</span>
             ${pasteHtml}
         `;
+        // Bind live search
+        var searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            searchInput.addEventListener('input', handleSearch);
+        }
     }
 }
 
@@ -903,12 +913,94 @@ async function handlePasteFiles() {
 
 let galleryAbort = false;
 
+function handleSearch() {
+    var input = document.getElementById('search-input');
+    if (!input) return;
+    var q = input.value.trim().toLowerCase();
+    var s = app.getState();
+    
+    if (!q) {
+        // Clear search — show all
+        app.setState({ searchQuery: '', searchResults: null });
+        return;
+    }
+    
+    // Search across file names
+    var results = [];
+    s.files.forEach(function(f) {
+        var name = f.split('/').pop().replace(/\.prod$/, '').toLowerCase();
+        if (name.indexOf(q) !== -1) {
+            results.push({ type: 'file', data: f, match: name });
+        }
+    });
+    // Search subfolder names (and their company names)
+    if (s.subdirs) {
+        s.subdirs.forEach(function(item) {
+            var folderName = (item.name || item).toLowerCase();
+            var companyName = (item.company && item.company.name) ? item.company.name.toLowerCase() : '';
+            if (folderName.indexOf(q) !== -1 || companyName.indexOf(q) !== -1) {
+                results.push({ type: 'folder', data: item });
+            }
+        });
+    }
+    
+    app.setState({ searchQuery: q, searchResults: results });
+    // Re-render gallery with filtered results
+    renderFilteredGallery(q, results);
+}
+
+function renderFilteredGallery(q, results) {
+    const grid = document.getElementById('gallery-grid');
+    if (!grid) return;
+    
+    if (results.length === 0) {
+        grid.innerHTML = '<div class="empty-tab">No results for "' + escapeHtml(q) + '"</div>';
+        return;
+    }
+    
+    var html = '';
+    results.forEach(function(item) {
+        if (item.type === 'folder') {
+            var d = item.data;
+            var folderName = d.name || d;
+            var companyInfo = d.company || null;
+            html += '<div class="product-card folder-card" data-folder="' + escapeHtml(folderName) + '">';
+            html += '<div class="card-thumb" style="background:var(--bg-surface2);display:flex;align-items:center;justify-content:center"><span style="font-size:40px">📁</span></div>';
+            html += '<div class="card-body">';
+            html += '<div class="card-title">' + escapeHtml(folderName) + '</div>';
+            if (companyInfo && companyInfo.name) {
+                html += '<div class="card-code" style="font-size:12px;color:var(--accent);font-weight:500">' + escapeHtml(companyInfo.name) + '</div>';
+            }
+            html += '</div></div>';
+        } else {
+            var f = item.data;
+            var name = f.split('/').pop().replace(/\.prod$/, '');
+            html += '<div class="product-card" data-file="' + escapeHtml(f) + '">' +
+                '<div class="card-check"><span class="check-box"></span></div>' +
+                '<div class="card-thumb"><span class="no-photo">📦</span></div>' +
+                '<div class="card-body">' +
+                '<div class="card-title">' + escapeHtml(name) + '</div>' +
+                '<div class="card-code" style="font-size:11px;color:var(--text-muted)">search result</div>' +
+                '<div class="card-no-price">—</div>' +
+                '</div></div>';
+        }
+    });
+    grid.innerHTML = html;
+}
+
 async function renderGallery() {
     const s = app.getState();
     const grid = document.getElementById('gallery-grid');
     renderGalleryHeader();
     const progress = document.getElementById('gallery-progress');
     const progressText = document.getElementById('gallery-progress-text');
+
+    // If there's a search query active, don't re-render gallery normally
+    if (s.searchQuery && s.searchQuery.length > 0) {
+        // searchResults already set by handleSearch; gallery header repainted
+        galleryAbort = true;
+        return;
+    }
 
     var currentDir = app.getState().currentDir;
 
@@ -1577,7 +1669,9 @@ async function loadDirectory(dir) {
         success: '',
         selectedFile: '',
         product: null,
-        priceHistory: []
+        priceHistory: [],
+        searchQuery: '',
+        searchResults: null
     });
     // Close company editor when navigating
     companyEditorState = { directory: '', company: null };
