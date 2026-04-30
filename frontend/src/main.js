@@ -2604,10 +2604,15 @@ function renderDealEditor(container) {
 }
 
 async function openCompanyDealFromGallery(dir, filename) {
+    // If we're inside a Deals/ folder, use the parent as the company directory
+    var companyDir = dir;
+    if (companyDir.replace(/\\/g, '/').replace(/\/$/, '').match(/\/Deals$/i) || companyDir.match(/[\\/]Deals$/i)) {
+        companyDir = companyDir.replace(/[\\/]Deals$/i, '');
+    }
     // Load company data and enter company editor mode, then open deal
     try {
-        var company = await api.getCompany(dir);
-        companyEditorState = { directory: dir, company: company, _tab: 'deals' };
+        var company = await api.getCompany(companyDir);
+        companyEditorState = { directory: companyDir, company: company, _tab: 'deals' };
         app.setState({ product: null, selectedFile: '' });
         openDealEditor(filename);
     } catch (err) {
