@@ -241,7 +241,11 @@ function renderSidebar() {
                     '</span>';
             }
             
-            html += '</div></div>';
+            html += '</div>' +
+                '<span class="folder-item-actions">' +
+                '<button class="btn btn-xs" data-action="edit-folder-company" data-subdir="' + escapeHtml(sub) + '" title="Edit company">✏️</button>' +
+                '</span>' +
+                '</div>';
         });
     }
 
@@ -271,6 +275,7 @@ function renderSidebar() {
     }
 
     list.innerHTML = html;
+    updateCompanyBar();
 }
 
 function renderContent() {
@@ -305,7 +310,7 @@ function renderContent() {
         renderDetailHeader();
         renderTabs();
         renderEditorTabContent();
-    } else if (companyEditorState.directory && companyEditorState.company) {
+    } else if (companyEditorState.directory) {
         // Company editor mode
         emptyState.style.display = 'none';
         galleryView.style.display = 'none';
@@ -325,6 +330,8 @@ function renderContent() {
         editorNav.style.display = 'none';
         renderGallery();
     }
+    // Update company bar visibility
+    updateCompanyBar();
 }
 
 function renderDetailHeader() {
@@ -675,10 +682,16 @@ function renderGalleryHeader() {
         `;
     } else {
         header.classList.remove('select-mode');
-        const fileCount = s.files.length;
+        var folderCount = (s.subdirs && s.subdirs.length) || 0;
+        var fileCount = s.files.length;
+        var text = '';
+        if (folderCount > 0) text += folderCount + ' folder(s)';
+        if (folderCount > 0 && fileCount > 0) text += ' · ';
+        if (fileCount > 0) text += fileCount + ' product(s)';
+        if (!text) text = 'empty';
         header.innerHTML = `
-            <span id="gallery-count">${fileCount} product(s)</span>
-            <span class="gallery-notice">Click a card to open editor; Ctrl+click to multi-select</span>
+            <span id="gallery-count">${text}</span>
+            <span class="gallery-notice">Click folder to navigate, product to edit; Ctrl+click to multi-select</span>
         `;
     }
 }
@@ -784,15 +797,63 @@ function renderGallery() {
     const progress = document.getElementById('gallery-progress');
     const progressText = document.getElementById('gallery-progress-text');
 
-    if (s.files.length === 0) {
-        grid.innerHTML = '<div class="empty-tab">No .prod files in this directory</div>';
+    var currentDir = app.getState().currentDir;
+
+    // Build combined list: folders first, then product files
+    var items = [];
+    if (s.subdirs && s.subdirs.length > 0) {
+        s.subdirs.forEach(function(item) {
+            items.push({ type: 'folder', data: item });
+        });
+    }
+    if (s.files.length > 0) {
+        s.files.forEach(function(f) {
+            items.push({ type: 'file', data: f });
+        });
+    }
+
+    if (items.length === 0) {
+        grid.innerHTML = '<div class="empty-tab">This directory is empty</div>';
         return;
     }
 
-    progress.style.display = 'flex';
-    progressText.textContent = 'Loading product data...';
+    // Render all cards: folder cards (static) then placeholder product cards
+    var html = '';
+    var productFiles = [];
+    items.forEach(function(item) {
+        if (item.type === 'folder') {
+            var d = item.data;
+            var folderName = d.name || d;
+            var companyInfo = d.company || null;
 
-    loadGalleryCards(s.files);
+            html += '<div class="product-card folder-card" data-folder="' + escapeHtml(folderName) + '">';
+            html += '<div class="card-thumb" style="background:var(--bg-surface2);display:flex;align-items:center;justify-content:center"><span style="font-size:40px">📁</span></div>';
+            html += '<div class="card-body">';
+            html += '<div class="card-title">' + escapeHtml(folderName) + '</div>';
+            if (companyInfo && companyInfo.name) {
+                html += '<div class="card-code" style="font-size:12px;color:var(--accent);font-weight:500">' + escapeHtml(companyInfo.name) + '</div>';
+                if (companyInfo.address) {
+                    var addrTrunc = companyInfo.address.length > 35 ? companyInfo.address.substring(0, 35) + '…' : companyInfo.address;
+                    html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📍 ' + escapeHtml(addrTrunc) + '</div>';
+                }
+                html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">👤 ' + (companyInfo.contactCount || 0) + ' contacts</div>';
+            } else {
+                html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">No company.yaml</div>';
+            }
+            html += '</div></div>';
+        } else {
+            productFiles.push(item.data);
+        }
+    });
+    grid.innerHTML = html;
+
+    if (productFiles.length > 0) {
+        progress.style.display = 'flex';
+        progressText.textContent = 'Loading product data...';
+        loadGalleryCards(productFiles);
+    } else {
+        progress.style.display = 'none';
+    }
 }
 
 async function loadGalleryCards(files) {
@@ -802,20 +863,19 @@ async function loadGalleryCards(files) {
     const progress = document.getElementById('gallery-progress');
     const progressText = document.getElementById('gallery-progress-text');
 
-    // Create placeholder cards
-    grid.innerHTML = files.map((f, idx) => {
+    // Append placeholder product cards (folder cards are already rendered)
+    files.forEach(function(f, idx) {
         const name = f.split('/').pop().replace(/\.prod$/, '');
-        const fileEscaped = escapeHtml(f);
-        return `<div class="product-card" data-file="${escapeHtml(f)}" data-gallery-idx="${idx}">
-            <div class="card-check"><span class="check-box"></span></div>
-            <div class="card-thumb"><span class="no-photo">📦</span></div>
-            <div class="card-body">
-                <div class="card-title">${escapeHtml(name)}</div>
-                <div class="card-code">loading...</div>
-                <div class="card-no-price">—</div>
-            </div>
-        </div>`;
-    }).join('');
+        var cardHtml = '<div class="product-card" data-file="' + escapeHtml(f) + '" data-gallery-idx="' + idx + '">' +
+            '<div class="card-check"><span class="check-box"></span></div>' +
+            '<div class="card-thumb"><span class="no-photo">📦</span></div>' +
+            '<div class="card-body">' +
+            '<div class="card-title">' + escapeHtml(name) + '</div>' +
+            '<div class="card-code">loading...</div>' +
+            '<div class="card-no-price">—</div>' +
+            '</div></div>';
+        grid.insertAdjacentHTML('beforeend', cardHtml);
+    });
 
     // Load products progressively
     for (let i = 0; i < files.length; i++) {
@@ -996,6 +1056,25 @@ function bindEvents() {
                 var delFile = btn.dataset.file;
                 if (delFile) handleDeleteFile(delFile);
                 break;
+            case 'edit-folder-company':
+                var esub = btn.dataset.subdir;
+                if (esub) {
+                    var eDir = app.getState().currentDir;
+                    handleOpenCompanyEditor(eDir + '/' + esub);
+                }
+                break;
+            case 'edit-current-company':
+                var curDir = app.getState().currentDir;
+                if (curDir) {
+                    handleOpenCompanyEditor(curDir);
+                }
+                break;
+            case 'create-current-company':
+                var cDir = app.getState().currentDir;
+                if (cDir) {
+                    handleCreateCompany(cDir);
+                }
+                break;
             case 'company-remove-email':
                 var emailIdx = parseInt(btn.dataset.idx);
                 if (!isNaN(emailIdx)) {
@@ -1009,6 +1088,14 @@ function bindEvents() {
                     var el = document.querySelector('.company-phone-input[data-idx="' + phoneIdx + '"]');
                     if (el) el.parentElement.remove();
                 }
+                break;
+            case 'company-add-email':
+                e.stopPropagation();
+                handleCompanyAddEmail();
+                break;
+            case 'company-add-phone':
+                e.stopPropagation();
+                handleCompanyAddPhone();
                 break;
             case 'company-edit-contact':
                 var contactIdx = parseInt(btn.dataset.idx);
@@ -1053,10 +1140,19 @@ function bindEvents() {
         }
     });
 
-    // Gallery card click → selection (Ctrl/Shift) or editor (plain click)
+    // Gallery card click → folder nav, selection, or editor
     body.addEventListener('click', function(e) {
         var card = e.target.closest('.product-card');
         if (!card) return;
+
+        // Folder card → navigate into it
+        var folder = card.dataset.folder;
+        if (folder) {
+            var currentDir = app.getState().currentDir;
+            handleNavigateSubdir(currentDir + '/' + folder);
+            return;
+        }
+
         var file = card.dataset.file;
         if (!file) return;
 
@@ -1075,24 +1171,12 @@ function bindEvents() {
         openProductEditor(file);
     });
 
-    // Double-click to open in selection mode or open company editor for folders
+    // Double-click product card to open editor
     body.addEventListener('dblclick', function(e) {
-        // Product card double-click
-        var card = e.target.closest('.product-card');
+        var card = e.target.closest('.product-card[data-file]');
         if (card) {
             var file = card.dataset.file;
             if (file) openProductEditor(file);
-            return;
-        }
-        // Folder double-click — open company editor
-        var folder = e.target.closest('.folder-item[data-subdir]');
-        if (folder) {
-            var subdir = folder.dataset.subdir;
-            if (subdir && subdir !== '..') {
-                var currentDir = app.getState().currentDir;
-                var fullPath = currentDir + '/' + subdir;
-                handleOpenCompanyEditor(fullPath);
-            }
         }
     });
 
@@ -1190,6 +1274,37 @@ function handleBackToGallery() {
         activeTab: 'photos',
         priceHistory: []
     });
+}
+
+function updateCompanyBar() {
+    var s = app.getState();
+    var editBtn = document.getElementById('btn-edit-company');
+    var createBtn = document.getElementById('btn-create-company');
+    if (!editBtn || !createBtn) return;
+    
+    if (s.currentDir) {
+        editBtn.style.display = '';
+        createBtn.style.display = '';
+    } else {
+        editBtn.style.display = 'none';
+        createBtn.style.display = 'none';
+    }
+}
+
+async function handleCreateCompany(dirPath) {
+    // Validate directory exists first
+    try {
+        app.setState({ loading: true, error: '' });
+        var company = await api.saveCompany(dirPath, {
+            name: '', address: '', website: '', emails: [], phones: [], contacts: []
+        });
+        companyEditorState = { directory: dirPath, company: company };
+        app.setState({ loading: false });
+        // Reload to refresh sidebar/folder cards with new company info
+        loadDirectory(app.getState().currentDir);
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to create company: ' + err.message });
+    }
 }
 
 // ========== DIRECTORY NAVIGATION & CREATION ==========
