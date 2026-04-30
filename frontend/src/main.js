@@ -1631,8 +1631,7 @@ function bindEvents() {
         if (dealFile) {
             var curDir = app.getState().currentDir;
             if (curDir) {
-                companyEditorState._tab = 'deals';
-                openDealEditor(dealFile);
+                openCompanyDealFromGallery(curDir, dealFile);
             }
             return;
         }
@@ -2604,6 +2603,18 @@ function renderDealEditor(container) {
     }
 }
 
+async function openCompanyDealFromGallery(dir, filename) {
+    // Load company data and enter company editor mode, then open deal
+    try {
+        var company = await api.getCompany(dir);
+        companyEditorState = { directory: dir, company: company, _tab: 'deals' };
+        app.setState({ product: null, selectedFile: '' });
+        openDealEditor(filename);
+    } catch (err) {
+        alert('Failed to load company for this directory: ' + err.message);
+    }
+}
+
 async function openDealEditor(filename) {
     var dir = companyEditorState.directory;
     var isNew = !filename;
@@ -2695,14 +2706,14 @@ function renderDealOrderEditor(container) {
             var titleText = item.product_title || item.product.split('/').pop().replace(/\.prod$/, '');
             var codeText = item._code || '';
             html += '<tr data-order-idx="' + idx + '">';
-            html += '<td style="padding:4px"><div style="display:flex;align-items:center;gap:6px"><div>' + thumbHtml + '</div><div><div style="font-weight:500;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">' + escapeHtml(titleText) + '</div>' + (codeText ? '<div style="font-size:10px;color:var(--text-muted)">' + escapeHtml(codeText) + '</div>' : '') + '</div></div></td>';
+            html += '<td style="padding:4px"><div style="display:flex;align-items:center;gap:6px"><div class="deal-order-thumb">' + thumbHtml + '</div><div><div class="deal-order-title" style="font-weight:500;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">' + escapeHtml(titleText) + '</div>' + (codeText ? '<div class="deal-order-code" style="font-size:10px;color:var(--text-muted)">' + escapeHtml(codeText) + '</div>' : '<div class="deal-order-code" style="font-size:10px;color:var(--text-muted)"></div>') + '</div></div></td>';
             html += '<td style="padding:4px"><input type="number" class="deal-order-minqty" value="' + (item.min_qty || 0) + '" style="width:40px;padding:3px 4px;font-size:12px" /></td>';
             html += '<td style="padding:4px"><input type="number" class="deal-order-qty" value="' + (item.quantity || 0) + '" style="width:50px;padding:3px 4px;font-size:12px" /></td>';
             html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-price" value="' + (item.unit_price || 0) + '" style="width:70px;padding:3px 4px;font-size:12px" /></td>';
             html += '<td style="padding:4px"><input type="text" class="deal-order-currency" value="' + escapeHtml(item.currency || '') + '" maxlength="3" style="width:40px;padding:3px 4px;font-size:12px" /></td>';
             html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-total" value="' + (item.total || 0) + '" style="width:75px;padding:3px 4px;font-size:12px" /></td>';
             html += '<td style="padding:4px"><input type="text" class="deal-order-notes" value="' + escapeHtml(item.notes || '') + '" style="width:70px;padding:3px 4px;font-size:12px" /></td>';
-            html += '<td style="padding:4px;text-align:center">' + thumbHtml + '</td>';
+            html += '<td style="padding:4px;text-align:center" class="deal-order-photo">' + thumbHtml + '</td>';
             html += '<td style="padding:4px"><button class="btn btn-xs btn-danger" data-action="remove-order-item" data-idx="' + idx + '">✕</button></td>';
             html += '</tr>';
         });
@@ -2719,8 +2730,42 @@ function renderDealOrderEditor(container) {
 
     html += '</div>'; // company-editor close
     container.innerHTML = html;
+    
+    // After rendering, resolve product paths and fetch thumbnails
+    _resolveDealProductPaths(dir, deal);
 
     wireDealOrderEditor(dir);
+}
+
+
+function _resolveDealProductPaths(companyDir, deal) {
+    // Resolve product paths relative to company directory (deals are in Deals/ subfolder)
+    var order = deal.order || [];
+    order.forEach(function(item, idx) {
+        var resolvedPath = item.product;
+        // If it's not an absolute path, resolve relative to companyDir
+        if (resolvedPath && resolvedPath.indexOf('/') !== 0) {
+            resolvedPath = companyDir + '/' + resolvedPath;
+        }
+        // Fetch product data for display
+        api.openProduct(resolvedPath).then(function(prod) {
+            var row = document.querySelector('tr[data-order-idx="' + idx + '"]');
+            if (!row) return;
+            var thumbCell = row.querySelector('.deal-order-thumb');
+            var photoCell = row.querySelector('.deal-order-photo');
+            if (prod.photos && prod.photos.length > 0) {
+                var imgHtml = '<img src="' + prod.photos[0] + '" style="width:32px;height:32px;object-fit:cover;border-radius:4px;vertical-align:middle" />';
+                if (thumbCell) thumbCell.innerHTML = imgHtml;
+                if (photoCell) photoCell.innerHTML = imgHtml;
+            }
+            // Update code
+            var codeEl = row.querySelector('.deal-order-code');
+            if (codeEl && prod.code) codeEl.textContent = prod.code;
+            // Update product title
+            var titleEl = row.querySelector('.deal-order-title');
+            if (titleEl && prod.title) titleEl.textContent = prod.title;
+        }).catch(function() {});
+    });
 }
 
 
