@@ -1251,8 +1251,9 @@ async function renderGallery() {
             html += '<div class="product-card comp-card" data-comp-path="' + escapeHtml(compPath) + '">';
             html += '<div class="card-thumb" style="background:linear-gradient(135deg,var(--accent),var(--accent-hover));display:flex;align-items:center;justify-content:center"><span style="font-size:36px">🏢</span></div>';
             html += '<div class="card-body">';
-            html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name || ci.name) + '</div>';
-            html += '<div class="card-code" style="font-size:12px;color:var(--text-secondary);font-weight:500">.comp</div>';
+            var compTitleLabel = c.company_type ? c.company_type.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : 'Company';
+            html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name || '(untitled)') + '</div>';
+            html += '<div class="card-code" style="font-size:12px;color:var(--text-secondary);font-weight:500">' + escapeHtml(compTitleLabel) + '</div>';
             if (c.address) {
                 html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📍 ' + escapeHtml(c.address.substring(0, 40)) + '</div>';
             }
