@@ -959,6 +959,7 @@ function renderFilteredGallery(q, results) {
     }
     
     var html = '';
+    var productFiles = [];
     results.forEach(function(item) {
         if (item.type === 'folder') {
             var d = item.data;
@@ -975,17 +976,42 @@ function renderFilteredGallery(q, results) {
         } else {
             var f = item.data;
             var name = f.split('/').pop().replace(/\.prod$/, '');
-            html += '<div class="product-card" data-file="' + escapeHtml(f) + '">' +
+            // Use the same placeholder format as loadGalleryCards
+            html += '<div class="product-card" data-file="' + escapeHtml(f) + '" data-gallery-idx="' + productFiles.length + '">' +
                 '<div class="card-check"><span class="check-box"></span></div>' +
                 '<div class="card-thumb"><span class="no-photo">📦</span></div>' +
                 '<div class="card-body">' +
                 '<div class="card-title">' + escapeHtml(name) + '</div>' +
-                '<div class="card-code" style="font-size:11px;color:var(--text-muted)">search result</div>' +
+                '<div class="card-code">loading...</div>' +
                 '<div class="card-no-price">—</div>' +
                 '</div></div>';
+            productFiles.push(f);
         }
     });
     grid.innerHTML = html;
+    
+    // Load product details progressively (same as loadGalleryCards)
+    if (productFiles.length > 0) {
+        var progress = document.getElementById('gallery-progress');
+        var progressText = document.getElementById('gallery-progress-text');
+        progress.style.display = 'flex';
+        progressText.textContent = 'Loading product data...';
+        
+        galleryAbort = false;
+        (async function() {
+            for (var i = 0; i < productFiles.length; i++) {
+                if (galleryAbort) break;
+                var file = productFiles[i];
+                progressText.textContent = 'Search: loading ' + (i + 1) + '/' + productFiles.length + '...';
+                try {
+                    var product = await api.openProduct(file);
+                    if (galleryAbort) break;
+                    updateGalleryCard(file, product);
+                } catch (err) {}
+            }
+            progress.style.display = 'none';
+        })();
+    }
 }
 
 async function renderGallery() {
