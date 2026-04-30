@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "products-webview"
+version = "1.0.0"
+description = "Products Manager Desktop App"
+requires-python = ">=3.10"
+dependencies = [
+    "pywebview>=5.0",
+    "pyyaml>=6.0",
+    "bottle>=0.13",
+]
