@@ -480,6 +480,7 @@ def api_open_system():
     """Open a file with the system default handler (xdg-open)."""
     body = request.json or {}
     path = body.get("path", "")
+    log(f"open-system called with path: {path}")
     if not path:
         return json_err("path is required")
     try:
