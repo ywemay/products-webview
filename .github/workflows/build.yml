@@ -63,6 +63,7 @@ jobs:
             --hidden-import prodlib \
             --hidden-import prodlib.core \
             --hidden-import prodlib.store \
+            --hidden-import prodlib.deal \
             --hidden-import bottle \
             app.py
 
@@ -75,6 +76,7 @@ jobs:
             --hidden-import prodlib `
             --hidden-import prodlib.core `
             --hidden-import prodlib.store `
+            --hidden-import prodlib.deal `
             --hidden-import bottle `
             app.py
 
@@ -88,6 +90,7 @@ jobs:
             --hidden-import prodlib \
             --hidden-import prodlib.core \
             --hidden-import prodlib.store \
+            --hidden-import prodlib.deal \
             --hidden-import bottle \
             app.py
 
