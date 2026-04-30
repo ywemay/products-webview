@@ -359,18 +359,14 @@ function renderContent() {
         return;
     }
 
-    if (s.product && s.selectedFile) {
-        // Editor mode (product selected)
-        emptyState.style.display = 'none';
-        galleryView.style.display = 'none';
-        detailHeader.style.display = 'block';
-        tabs.style.display = 'flex';
-        tabContent.style.display = 'block';
-        editorNav.style.display = 'flex';
-        renderDetailHeader();
-        renderTabs();
-        renderEditorTabContent();
-    } else if (companyEditorState.directory) {
+    // Hide product editor UI (now uses external editor)
+    detailHeader.style.display = 'none';
+    tabs.style.display = 'none';
+    tabContent.innerHTML = '';
+    tabContent.style.display = 'none';
+    editorNav.style.display = 'none';
+
+    if (companyEditorState.directory) {
         // Company editor mode
         emptyState.style.display = 'none';
         galleryView.style.display = 'none';
@@ -1411,29 +1407,10 @@ async function getLatestPriceForCard(file, card) {
 // ========== GALLERY CARD CLICK → EDITOR ==========
 
 function openProductEditor(file) {
-    galleryAbort = true;
-    app.setState({
-        selectedFile: file,
-        loading: true,
-        error: '',
-        success: '',
-        priceHistory: [],
-        activeTab: 'photos'
-    });
-
-    api.openProduct(file).then(function(product) {
-        // Merge local variations if available
-        const localVars = loadLocalVariations(product.uuid);
-        if (localVars) {
-            product.variations = localVars.variations;
-        }
-        app.setState({ product: product, loading: false });
-    }).catch(function(err) {
-        app.setState({
-            product: null,
-            loading: false,
-            error: 'Failed to open product: ' + err.message
-        });
+    // Open the .prod file with the system default handler
+    // (the dedicated products-desktop-editor which handles one file at a time)
+    api.openSystem(file).catch(function(err) {
+        app.setState({ error: 'Failed to open file: ' + err.message });
     });
 }
 

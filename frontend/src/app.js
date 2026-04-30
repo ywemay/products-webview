@@ -114,6 +114,7 @@ const api = {
     getDeal:               (d, f) => apiCall('POST', '/api/deals/get', { dir: d, filename: f }),
     saveDeal:              (d, deal) => apiCall('POST', '/api/deals/save', { dir: d, deal }),
     deleteDeal:            (d, f) => apiCall('POST', '/api/deals/delete', { dir: d, filename: f }),
+    openSystem:           (path) => apiCall('POST', '/api/open-system', { path: path }),
     pickDirectory:        () => callDialogApi('pickDirectory'),
     pickPhotos:           () => callDialogApi('pickPhotos'),
 };

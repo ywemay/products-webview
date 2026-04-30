@@ -475,6 +475,28 @@ def api_delete_contact():
 
 
 # Deals CRUD -------------------------------------------------------------
+@bottle_app.post("/api/open-system")
+def api_open_system():
+    """Open a file with the system default handler (xdg-open)."""
+    body = request.json or {}
+    path = body.get("path", "")
+    if not path:
+        return json_err("path is required")
+    try:
+        import subprocess
+        import platform
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.Popen(["open", path])
+        elif system == "Windows":
+            os.startfile(path)
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return json_ok({"opened": True})
+    except Exception as e:
+        return json_err(str(e))
+
+
 @bottle_app.post("/api/deals/list")
 def api_list_deals():
     """List all deals in a company directory's Deals subdirectory."""
