@@ -5,6 +5,7 @@ Each subdirectory can contain a company.yaml file with:
     name: str
     address: str
     website: str
+    company_type: str  # customer, supplier, shipping_company, bank, post_office, other
     emails: list[str]
     phones: list[str]
   contacts:
@@ -82,6 +83,7 @@ class Company:
         self.name: str = ""
         self.address: str = ""
         self.website: str = ""
+        self.company_type: str = ""
         self.emails: list = []
         self.phones: list = []
         self.contacts: list = []
@@ -99,6 +101,7 @@ class Company:
             c.name = company_data.get("name", "")
             c.address = company_data.get("address", "")
             c.website = company_data.get("website", "")
+            c.company_type = company_data.get("company_type", "")
             c.emails = company_data.get("emails", [])
             c.phones = company_data.get("phones", [])
             for cd in data.get("contacts", []):
@@ -116,6 +119,8 @@ class Company:
             company_section["address"] = self.address
         if self.website:
             company_section["website"] = self.website
+        if self.company_type:
+            company_section["company_type"] = self.company_type
         if self.emails:
             company_section["emails"] = self.emails
         if self.phones:
@@ -138,6 +143,7 @@ class Company:
             "name": self.name,
             "address": self.address,
             "website": self.website,
+            "company_type": self.company_type,
             "emails": self.emails,
             "phones": self.phones,
             "contacts": [c.to_dict() for c in self.contacts],

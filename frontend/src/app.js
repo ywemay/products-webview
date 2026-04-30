@@ -23,6 +23,8 @@ const app = {
         fullscreenPhoto: null,
         selectedFiles: [],
         selectMode: false,
+        lastSelectedIndex: -1,
+        clipboard: null,  // { action: 'copy'|'cut', files: [...] }
     },
 
     setState(updates) {
@@ -97,6 +99,8 @@ const api = {
                                apiCall('POST', '/api/update-description',
                                        { path, description: desc }),
     deleteProducts:        (paths) => apiCall('POST', '/api/delete-products', { paths }),
+    copyProducts:          (paths, targetDir) => apiCall('POST', '/api/copy-products', { paths, targetDir }),
+    moveProducts:          (paths, targetDir) => apiCall('POST', '/api/move-products', { paths, targetDir }),
     listItems:             (d) => apiCall('POST', '/api/list-items', { dir: d }),
     getCompany:            (d) => apiCall('POST', '/api/company', { dir: d }),
     saveCompany:           (d, company) => apiCall('POST', '/api/company/save', { dir: d, company }),

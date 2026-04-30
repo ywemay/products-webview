@@ -1110,12 +1110,17 @@ input, select, textarea, button {
     white-space: nowrap;
 }
 
+.contacts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
+}
+
 .contact-card {
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 12px;
-    margin-bottom: 8px;
 }
 
 .contact-header {

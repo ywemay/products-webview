@@ -74,6 +74,7 @@ def list_items(dir_path: str) -> list[dict]:
                         "name": c.name,
                         "address": c.address,
                         "website": c.website,
+                        "company_type": c.company_type,
                         "emails": c.emails,
                         "phones": c.phones,
                         "contactCount": len(c.contacts),

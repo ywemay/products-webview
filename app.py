@@ -311,6 +311,52 @@ def api_delete_products():
     return json_ok({"deleted": deleted, "errors": errors})
 
 
+@bottle_app.post("/api/copy-products")
+def api_copy_products():
+    """Copy .prod files (and their sidecar images) to a target directory."""
+    body = request.json or {}
+    paths = body.get("paths", [])
+    target_dir = body.get("targetDir", "")
+    if not paths or not target_dir:
+        return json_err("paths and targetDir are required")
+    copied = []
+    errors = []
+    os.makedirs(target_dir, exist_ok=True)
+    for src in paths:
+        try:
+            name = os.path.basename(src)
+            dst = os.path.join(target_dir, name)
+            import shutil
+            shutil.copy2(src, dst)
+            copied.append(dst)
+        except OSError as e:
+            errors.append({"path": src, "error": str(e)})
+    return json_ok({"copied": copied, "errors": errors})
+
+
+@bottle_app.post("/api/move-products")
+def api_move_products():
+    """Move .prod files to a target directory."""
+    body = request.json or {}
+    paths = body.get("paths", [])
+    target_dir = body.get("targetDir", "")
+    if not paths or not target_dir:
+        return json_err("paths and targetDir are required")
+    moved = []
+    errors = []
+    os.makedirs(target_dir, exist_ok=True)
+    for src in paths:
+        try:
+            name = os.path.basename(src)
+            dst = os.path.join(target_dir, name)
+            import shutil
+            shutil.move(src, dst)
+            moved.append(dst)
+        except OSError as e:
+            errors.append({"path": src, "error": str(e)})
+    return json_ok({"moved": moved, "errors": errors})
+
+
 @bottle_app.post("/api/log-client-error")
 def api_log_client_error():
     """Receive JavaScript errors from the frontend and log them."""

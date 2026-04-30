@@ -278,6 +278,66 @@ function renderSidebar() {
     updateCompanyBar();
 }
 
+function toggleFileSelection(file, shiftKey, ctrlKey) {
+    const s = app.getState();
+    let sel = [...s.selectedFiles];
+    var lastIdx = s.lastSelectedIndex;
+
+    // Find index of clicked file in the full file list
+    var clickedIdx = -1;
+    for (var i = 0; i < s.files.length; i++) {
+        if (s.files[i] === file) {
+            clickedIdx = i;
+            break;
+        }
+    }
+
+    if (shiftKey && lastIdx >= 0 && clickedIdx >= 0) {
+        // Range selection: select all files between lastSelectedIndex and clickedIdx
+        var startIdx = Math.min(lastIdx, clickedIdx);
+        var endIdx = Math.max(lastIdx, clickedIdx);
+        for (var i = startIdx; i <= endIdx; i++) {
+            var f = s.files[i];
+            if (sel.indexOf(f) === -1) {
+                sel.push(f);
+            }
+        }
+        app.setState({
+            selectedFiles: sel,
+            selectMode: sel.length > 0,
+            lastSelectedIndex: lastIdx,
+        });
+        return;
+    }
+
+    if (ctrlKey) {
+        const idx = sel.indexOf(file);
+        if (idx !== -1) {
+            sel.splice(idx, 1);
+        } else {
+            sel.push(file);
+        }
+        app.setState({
+            selectedFiles: sel,
+            selectMode: sel.length > 0,
+            lastSelectedIndex: clickedIdx >= 0 ? clickedIdx : lastIdx,
+        });
+        return;
+    }
+
+    // Single click — clear others, select this one
+    if (sel.length === 1 && sel[0] === file) {
+        sel = [];
+    } else {
+        sel = [file];
+    }
+    app.setState({
+        selectedFiles: sel,
+        selectMode: sel.length > 0,
+        lastSelectedIndex: clickedIdx >= 0 ? clickedIdx : -1,
+    });
+}
+
 function renderContent() {
     const s = app.getState();
     const emptyState = document.getElementById('empty-state');
@@ -678,10 +738,13 @@ function renderGalleryHeader() {
             <span class="selection-count">${count} selected</span>
             <span class="spacer"></span>
             <button class="btn btn-sm" data-action="deselect-all">✕ Deselect</button>
+            <button class="btn btn-sm btn-primary" data-action="copy-selected">📋 Copy</button>
+            <button class="btn btn-sm btn-primary" data-action="cut-selected">✂️ Cut</button>
             <button class="btn btn-sm btn-danger" data-action="delete-selected">🗑 Delete</button>
         `;
     } else {
         header.classList.remove('select-mode');
+        var clipboard = app.getState().clipboard;
         var folderCount = (s.subdirs && s.subdirs.length) || 0;
         var fileCount = s.files.length;
         var text = '';
@@ -689,9 +752,11 @@ function renderGalleryHeader() {
         if (folderCount > 0 && fileCount > 0) text += ' · ';
         if (fileCount > 0) text += fileCount + ' product(s)';
         if (!text) text = 'empty';
+        var pasteHtml = clipboard ? ' <button class="btn btn-sm" data-action="paste-files">📋 Paste (' + clipboard.files.length + ')</button>' : '';
         header.innerHTML = `
             <span id="gallery-count">${text}</span>
             <span class="gallery-notice">Click folder to navigate, product to edit; Ctrl+click to multi-select</span>
+            ${pasteHtml}
         `;
     }
 }
@@ -702,33 +767,6 @@ function getSelectedFiles() {
 
 function isFileSelected(file) {
     return app.getState().selectedFiles.indexOf(file) !== -1;
-}
-
-function toggleFileSelection(file, shiftKey, ctrlKey) {
-    const s = app.getState();
-    let sel = [...s.selectedFiles];
-
-    if (ctrlKey || shiftKey) {
-        const idx = sel.indexOf(file);
-        if (idx !== -1) {
-            sel.splice(idx, 1);
-        } else {
-            sel.push(file);
-        }
-    } else {
-        // Single select — clear others first
-        if (sel.length === 1 && sel[0] === file) {
-            // Clicking the same one — toggle off
-            sel = [];
-        } else {
-            sel = [file];
-        }
-    }
-
-    app.setState({
-        selectedFiles: sel,
-        selectMode: sel.length > 0,
-    });
 }
 
 async function handleDeleteSelected() {
@@ -783,6 +821,81 @@ async function handleDeleteFile(file) {
         if (dir) await loadDirectory(dir);
     } catch (err) {
         app.setState({ loading: false, error: 'Delete failed: ' + err.message });
+    }
+}
+
+// ========== COPY / CUT / PASTE ==========
+
+function handleCopySelected() {
+    var files = getSelectedFiles();
+    if (files.length === 0) return;
+    app.setState({
+        clipboard: { action: 'copy', files: files },
+        selectedFiles: [],
+        selectMode: false,
+        success: files.length + ' file(s) copied to clipboard.'
+    });
+}
+
+function handleCutSelected() {
+    var files = getSelectedFiles();
+    if (files.length === 0) return;
+    app.setState({
+        clipboard: { action: 'cut', files: files },
+        selectedFiles: [],
+        selectMode: false,
+        success: files.length + ' file(s) cut to clipboard.'
+    });
+}
+
+async function handlePasteFiles() {
+    var s = app.getState();
+    var cb = s.clipboard;
+    if (!cb || !cb.files || cb.files.length === 0) {
+        app.setState({ error: 'Nothing to paste.' });
+        return;
+    }
+    if (!s.currentDir) {
+        app.setState({ error: 'No directory to paste into.' });
+        return;
+    }
+    
+    app.setState({ loading: true, error: '', success: '' });
+    try {
+        var targetDir = s.currentDir;
+        if (cb.action === 'copy') {
+            var result = await api.copyProducts(cb.files, targetDir);
+            if (result.errors && result.errors.length > 0) {
+                app.setState({
+                    loading: false,
+                    error: 'Copied ' + result.copied.length + ', errors: ' + result.errors.map(function(e) { return e.path.split('/').pop(); }).join(', ')
+                });
+            } else {
+                app.setState({
+                    loading: false,
+                    clipboard: null,
+                    success: 'Pasted ' + result.copied.length + ' file(s).'
+                });
+            }
+        } else if (cb.action === 'cut') {
+            var result = await api.moveProducts(cb.files, targetDir);
+            if (result.errors && result.errors.length > 0) {
+                app.setState({
+                    loading: false,
+                    error: 'Moved ' + result.moved.length + ', errors: ' + result.errors.map(function(e) { return e.path.split('/').pop(); }).join(', ')
+                });
+            } else {
+                app.setState({
+                    loading: false,
+                    clipboard: null,
+                    success: 'Moved ' + result.moved.length + ' file(s).'
+                });
+            }
+        }
+        // Reload directory
+        await loadDirectory(s.currentDir);
+    } catch (err) {
+        app.setState({ loading: false, error: 'Paste failed: ' + err.message });
     }
 }
 
@@ -1049,6 +1162,9 @@ function bindEvents() {
             case 'do-create-dir': handleCreateSubdir(); break;
             case 'cancel-createdir': handleCancelCreateDir(); break;
             case 'delete-selected': handleDeleteSelected(); break;
+            case 'copy-selected': handleCopySelected(); break;
+            case 'cut-selected': handleCutSelected(); break;
+            case 'paste-files': handlePasteFiles(); break;
             case 'deselect-all':
                 app.setState({ selectedFiles: [], selectMode: false });
                 break;
@@ -1296,7 +1412,7 @@ async function handleCreateCompany(dirPath) {
     try {
         app.setState({ loading: true, error: '' });
         var company = await api.saveCompany(dirPath, {
-            name: '', address: '', website: '', emails: [], phones: [], contacts: []
+            name: '', address: '', website: '', company_type: '', emails: [], phones: [], contacts: []
         });
         companyEditorState = { directory: dirPath, company: company };
         app.setState({ loading: false });
@@ -1778,40 +1894,60 @@ function renderCompanyEditor(container) {
     html += '<div class="form-group" style="flex:2"><label>Company Name</label><input type="text" id="company-name-input" value="' + escapeHtml(c.name) + '" /></div>';
     html += '<div class="form-group" style="flex:1"><label>Website</label><input type="text" id="company-website-input" value="' + escapeHtml(c.website || '') + '" /></div>';
     html += '</div>';
-    html += '<div class="form-group" style="margin-bottom:10px"><label>Address</label><input type="text" id="company-address-input" value="' + escapeHtml(c.address || '') + '" /></div>';
     
-    html += '<div class="form-group" style="margin-bottom:8px"><label>Emails</label>';
+    // Company Type + Address in one row
+    html += '<div class="form-row">';
+    html += '<div class="form-group" style="flex:1"><label>Company Type</label>';
+    html += '<select id="company-type-select" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary);font-size:13px">';
+    var types = ['', 'customer', 'supplier', 'shipping_company', 'bank', 'post_office', 'other'];
+    var currentType = c.company_type || '';
+    types.forEach(function(t) {
+        var label = t ? t.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : '— Select Type —';
+        html += '<option value="' + escapeHtml(t) + '"' + (currentType === t ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    });
+    html += '</select></div>';
+    html += '<div class="form-group" style="flex:2"><label>Address</label><input type="text" id="company-address-input" value="' + escapeHtml(c.address || '') + '" /></div>';
+    html += '</div>';
+    
+    // Emails and Phones in the same row
+    html += '<div class="form-row" style="gap:16px">';
+    html += '<div class="form-group" style="flex:1"><label>Emails</label>';
     html += '<div id="company-emails-list">';
     if (c.emails && c.emails.length > 0) {
         c.emails.forEach(function(email, idx) {
-            html += '<div class="contact-field-row"><input type="text" class="company-email-input" value="' + escapeHtml(email) + '" data-idx="' + idx + '" /><button class="btn btn-xs btn-danger" data-action="company-remove-email" data-idx="' + idx + '">✕</button></div>';
+            html += '<div class="contact-field-row"><input type="text" class="company-email-input" value="' + escapeHtml(email) + '" data-idx="' + idx + '" placeholder="email@example.com" /><button class="btn btn-xs btn-danger" data-action="company-remove-email" data-idx="' + idx + '">✕</button></div>';
         });
+    } else {
+        html += '<div class="contact-field-row"><input type="text" class="company-email-input" data-idx="0" placeholder="email@example.com" /></div>';
     }
     html += '</div>';
-    html += '<button class="btn btn-sm" data-action="company-add-email" style="margin-top:4px">➕ Add Email</button></div>';
-
-    html += '<div class="form-group" style="margin-bottom:8px"><label>Phones</label>';
+    html += '<button class="btn btn-sm" data-action="company-add-email" style="margin-top:4px;font-size:12px">➕ Add Email</button></div>';
+    html += '<div class="form-group" style="flex:1"><label>Phones</label>';
     html += '<div id="company-phones-list">';
     if (c.phones && c.phones.length > 0) {
         c.phones.forEach(function(phone, idx) {
-            html += '<div class="contact-field-row"><input type="text" class="company-phone-input" value="' + escapeHtml(phone) + '" data-idx="' + idx + '" /><button class="btn btn-xs btn-danger" data-action="company-remove-phone" data-idx="' + idx + '">✕</button></div>';
+            html += '<div class="contact-field-row"><input type="text" class="company-phone-input" value="' + escapeHtml(phone) + '" data-idx="' + idx + '" placeholder="+123456789" /><button class="btn btn-xs btn-danger" data-action="company-remove-phone" data-idx="' + idx + '">✕</button></div>';
         });
+    } else {
+        html += '<div class="contact-field-row"><input type="text" class="company-phone-input" data-idx="0" placeholder="+123456789" /></div>';
     }
     html += '</div>';
-    html += '<button class="btn btn-sm" data-action="company-add-phone" style="margin-top:4px">➕ Add Phone</button></div>';
+    html += '<button class="btn btn-sm" data-action="company-add-phone" style="margin-top:4px;font-size:12px">➕ Add Phone</button></div>';
+    html += '</div>';
 
     html += '<button class="btn btn-primary" id="company-save-btn" style="margin-top:8px">💾 Save Company</button>';
 
-    // Contacts section
+    // Contacts section — grid layout
     html += '<div class="section-header" style="margin-top:24px">👤 Contacts</div>';
 
     if (c.contacts && c.contacts.length > 0) {
+        html += '<div class="contacts-grid">';
         c.contacts.forEach(function(contact, idx) {
             html += '<div class="contact-card" data-contact-idx="' + idx + '">';
             html += '<div class="contact-header"><strong>' + escapeHtml(contact.fn || 'Unnamed') + '</strong>';
             html += '<div class="contact-actions">';
-            html += '<button class="btn btn-sm" data-action="company-edit-contact" data-idx="' + idx + '">✏️ Edit</button>';
-            html += '<button class="btn btn-sm btn-danger" data-action="company-delete-contact" data-idx="' + idx + '">🗑 Delete</button>';
+            html += '<button class="btn btn-xs" data-action="company-edit-contact" data-idx="' + idx + '">✏️</button>';
+            html += '<button class="btn btn-xs btn-danger" data-action="company-delete-contact" data-idx="' + idx + '">🗑</button>';
             html += '</div></div>';
             if (contact.tel) html += '<div class="contact-detail">📞 ' + escapeHtml(contact.tel) + '</div>';
             if (contact.email) html += '<div class="contact-detail">✉️ ' + escapeHtml(contact.email) + '</div>';
@@ -1819,6 +1955,7 @@ function renderCompanyEditor(container) {
             if (contact.role) html += '<div class="contact-detail">🎯 ' + escapeHtml(contact.role) + '</div>';
             html += '</div>';
         });
+        html += '</div>';
     } else {
         html += '<div class="empty-tab" style="padding:12px">No contacts yet.</div>';
     }
@@ -1937,6 +2074,7 @@ async function handleContactSave() {
 async function handleCompanySave() {
     var company = companyEditorState.company;
     company.name = document.getElementById('company-name-input').value.trim();
+    company.company_type = document.getElementById('company-type-select').value;
     company.address = document.getElementById('company-address-input').value.trim();
     company.website = document.getElementById('company-website-input').value.trim();
     
