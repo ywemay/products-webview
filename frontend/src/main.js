@@ -2448,12 +2448,53 @@ function wireCompanyTabs() {
 
 // ========== DEALS TAB ==========
 
+async function loadDealsForCompany(dir) {
+    var listEl = document.getElementById('company-deals-list');
+    if (!listEl) return;
+    try {
+        var deals = await api.listDeals(dir);
+        if (!deals || deals.length === 0) {
+            listEl.innerHTML = '<div class="empty-tab" style="padding:8px;font-size:13px">No deals in this directory.</div>';
+            return;
+        }
+        var dh = '';
+        deals.forEach(function(d) {
+            var statusColor = 'var(--text-muted)';
+            var statusEmoji = '⏳';
+            if (d.status === 'confirmed') { statusColor = 'var(--accent-green)'; statusEmoji = '✅'; }
+            else if (d.status === 'shipped') { statusColor = 'var(--accent-orange)'; statusEmoji = '🚚'; }
+            else if (d.status === 'completed') { statusColor = 'var(--accent-green)'; statusEmoji = '🎉'; }
+            else if (d.status === 'cancelled') { statusColor = 'var(--accent-red)'; statusEmoji = '🚫'; }
+            dh += '<div class="deal-card" data-deal-file="' + escapeHtml(d.filename) + '" style="padding:10px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer">';
+            dh += '<div style="display:flex;justify-content:space-between;align-items:center">';
+            dh += '<div><strong>' + escapeHtml(d.title || d.filename) + '</strong>';
+            if (d.date) dh += ' <span style="font-size:11px;color:var(--text-muted)">(' + escapeHtml(d.date) + ')</span>';
+            dh += '</div>';
+            dh += '<span style="color:' + statusColor + ';font-size:11px;font-weight:600">' + statusEmoji + ' ' + escapeHtml(d.status) + '</span>';
+            dh += '</div>';
+            dh += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">';
+            if (d.order_count) dh += '📦 ' + d.order_count + ' item(s) ';
+            if (d.warehouse_records) dh += '📥 ' + d.warehouse_records + ' warehouse record(s)';
+            dh += '</div>';
+            dh += '</div>';
+        });
+        listEl.innerHTML = dh;
+        listEl.querySelectorAll('.deal-card').forEach(function(card) {
+            card.addEventListener('click', function() {
+                var dealPath = dir + '/Deals/' + card.dataset.dealFile;
+                api.openSystem(dealPath);
+            });
+        });
+    } catch (err) {
+        if (listEl) listEl.innerHTML = '<div class="error-state" style="font-size:12px">Error: ' + escapeHtml(err.message) + '</div>';
+    }
+}
+
 async function renderDealsList(container) {
     var dir = companyEditorState.directory;
-    html = '<div class="company-editor">';
+    var html = '<div class="company-editor">';
     html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
     html += '<span>📋 Deals</span>';
-    html += '<button class="btn btn-sm btn-primary" data-action="new-deal">➕ New Deal</button>';
     html += '</div>';
     html += '<div id="deals-list">Loading...</div>';
     html += '</div>';
@@ -2463,7 +2504,7 @@ async function renderDealsList(container) {
         var deals = await api.listDeals(dir);
         var listEl = document.getElementById('deals-list');
         if (!deals || deals.length === 0) {
-            listEl.innerHTML = '<div class="empty-tab" style="padding:16px">No deals yet. Click "New Deal" to create one.</div>';
+            listEl.innerHTML = '<div class="empty-tab" style="padding:16px">No deals in this directory.</div>';
         } else {
             var dh = '';
             deals.forEach(function(d) {
@@ -2487,20 +2528,18 @@ async function renderDealsList(container) {
                 dh += '</div>';
             });
             listEl.innerHTML = dh;
-            // Click to edit
+            // Click to open externally in deal-editor
             listEl.querySelectorAll('.deal-card').forEach(function(card) {
                 card.addEventListener('click', function() {
-                    openDealEditor(card.dataset.dealFile);
+                    var dealDir = dir + '/Deals';
+                    var dealPath = dealDir + '/' + card.dataset.dealFile;
+                    api.openSystem(dealPath);
                 });
             });
         }
     } catch (err) {
         document.getElementById('deals-list').innerHTML = '<div class="error-state">Error: ' + escapeHtml(err.message) + '</div>';
     }
-
-    // Wire new deal button
-    var newBtn = container.querySelector('[data-action="new-deal"]');
-    if (newBtn) newBtn.addEventListener('click', function() { openDealEditor(null); });
 }
 
 
@@ -2517,44 +2556,19 @@ function renderDealEditor(container) {
 }
 
 async function openCompanyDealFromGallery(dir, filename) {
-    // If we're inside a Deals/ folder, use the parent as the company directory
-    var companyDir = dir;
-    if (companyDir.replace(/\\/g, '/').replace(/\/$/, '').match(/\/Deals$/i) || companyDir.match(/[\\/]Deals$/i)) {
-        companyDir = companyDir.replace(/[\\/]Deals$/i, '');
-    }
-    // Load company data and enter company editor mode, then open deal
-    try {
-        var company = await api.getCompany(companyDir);
-        companyEditorState = { directory: companyDir, company: company, _tab: 'deals' };
-        app.setState({ product: null, selectedFile: '' });
-        openDealEditor(filename);
-    } catch (err) {
-        alert('Failed to load company for this directory: ' + err.message);
-    }
+    // Open the .deal file externally in the dedicated deal-editor
+    var dealPath = dir + '/Deals/' + filename;
+    api.openSystem(dealPath);
 }
 
 async function openDealEditor(filename) {
     var dir = companyEditorState.directory;
-    var isNew = !filename;
-    var deal;
-    if (isNew) {
-        deal = {
-            title: '', date: new Date().toISOString().slice(0, 10),
-            status: 'pending', additional_costs: 0, additional_costs_currency: '',
-            notes: '', currency: 'USD', order: [], warehouse: [],
-            filename: ''
-        };
+    var dealDir = dir + '/Deals';
+    if (filename) {
+        api.openSystem(dealDir + '/' + filename);
     } else {
-        try {
-            deal = await api.getDeal(dir, filename);
-        } catch (err) {
-            alert('Failed to load deal: ' + err.message);
-            return;
-        }
+        alert('To create a new deal, use the dedicated Deal Editor app.');
     }
-    _dealEditorState = { deal: deal, isNew: isNew };
-    companyEditorState._tab = isNew ? 'deals' : 'deals';
-    renderDealOrderEditor(document.getElementById('tab-content'));
 }
 
 
@@ -2995,11 +3009,11 @@ async function renderWarehouseTab(container) {
                 } catch (err) {}
             }
             listEl.innerHTML = wh || '<div class="empty-tab">No warehouse records with items.</div>';
-            // Wire edit buttons
+            // Wire edit buttons — open externally in deal-editor
             listEl.querySelectorAll('[data-action="open-deal-warehouse"]').forEach(function(btn) {
                 btn.addEventListener('click', function() {
-                    companyEditorState._tab = 'warehouse';
-                    openDealEditor(btn.dataset.dealFile);
+                    var dealPath = dir + '/Deals/' + btn.dataset.dealFile;
+                    api.openSystem(dealPath);
                 });
             });
         }
@@ -3009,8 +3023,7 @@ async function renderWarehouseTab(container) {
 
     var newBtn = container.querySelector('[data-action="new-warehouse-entry"]');
     if (newBtn) newBtn.addEventListener('click', function() {
-        companyEditorState._tab = 'deals';
-        openDealEditor(null);
+        alert('To create a new deal with warehouse entries, use the dedicated Deal Editor app.');
     });
 }
 
@@ -3158,13 +3171,12 @@ function gatherWarehouseFormData(deal) {
 
 
 async function handleOpenCompanyEditor(subdirPath) {
-    app.setState({ loading: true, error: '' });
-    try {
-        var company = await api.getCompany(subdirPath);
-        companyEditorState = { directory: subdirPath, company: company };
-        app.setState({ loading: false });
-    } catch (err) {
-        app.setState({ loading: false, error: 'Failed to load company: ' + err.message });
+    // Open externally in company-editor
+    var compFile = Company.findCompanyFile(subdirPath);
+    if (compFile && compFile.endsWith('.comp')) {
+        api.openSystem(subdirPath + '/' + compFile);
+    } else {
+        app.setState({ error: 'No .comp file found in this directory.' });
     }
 }
 
