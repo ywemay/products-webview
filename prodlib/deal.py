@@ -50,6 +50,7 @@ class OrderItem:
         self.product: str = ""
         self.product_title: str = ""
         self.quantity: int = 0
+        self.min_qty: int = 0
         self.unit_price: float = 0.0
         self.currency: str = ""
         self.total: float = 0.0
@@ -61,6 +62,7 @@ class OrderItem:
         o.product = d.get("product", "")
         o.product_title = d.get("product_title", "")
         o.quantity = int(d.get("quantity", 0))
+        o.min_qty = int(d.get("min_qty", 0))
         o.unit_price = float(d.get("unit_price", 0))
         o.currency = d.get("currency", "")
         o.total = float(d.get("total", 0))
@@ -72,6 +74,7 @@ class OrderItem:
         if self.product: d["product"] = self.product
         if self.product_title: d["product_title"] = self.product_title
         if self.quantity: d["quantity"] = self.quantity
+        if self.min_qty: d["min_qty"] = self.min_qty
         if self.unit_price: d["unit_price"] = self.unit_price
         if self.currency: d["currency"] = self.currency
         if self.total: d["total"] = self.total

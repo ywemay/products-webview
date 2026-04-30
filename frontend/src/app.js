@@ -27,6 +27,7 @@ const app = {
         clipboard: null,  // { action: 'copy'|'cut', files: [...] }
         searchQuery: '',
         searchResults: null, // null = not searching, [] = no results, [items] = results
+        dealFiles: [],
     },
 
     setState(updates) {

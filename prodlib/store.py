@@ -87,7 +87,30 @@ def list_items(dir_path: str) -> list[dict]:
                 "type": "file",
                 "name": name,
                 "path": full_path,
+                "subtype": "prod",
                 "company": None,
+            })
+        elif name.endswith(".deal") and os.path.isfile(full_path):
+            from .deal import Deal
+            deal_info = {"name": name, "path": full_path, "subtype": "deal"}
+            try:
+                d = Deal.load(full_path)
+                deal_info["deal"] = {
+                    "title": d.title,
+                    "date": d.date,
+                    "status": d.status,
+                    "order_count": len(d.order),
+                    "warehouse_records": len(d.warehouse),
+                }
+            except Exception:
+                pass
+            items.append({
+                "type": "file",
+                "name": name,
+                "path": full_path,
+                "subtype": "deal",
+                "company": None,
+                "deal_info": deal_info.get("deal"),
             })
 
     return items

@@ -824,20 +824,34 @@ async function handleAddSelectedToDeal() {
             filename: today + '-Quick_Order.deal'
         };
 
-        // Add selected files as order items
+        // Add selected files as order items (with price from product)
         var dealCurrency = s.settings.currency || 'USD';
-        files.forEach(function(file) {
+        for (var fi = 0; fi < files.length; fi++) {
+            var file = files[fi];
             var displayName = file.split('/').pop().replace(/\.prod$/, '');
+            var unitPrice = 0;
+            var code = '';
+            try {
+                var prodData = await api.openProduct(file);
+                code = prodData.code || '';
+                if (prodData.priceCount > 0) {
+                    try {
+                        var hist = await api.getPriceHistory(file);
+                        if (hist && hist.length > 0) unitPrice = hist[hist.length - 1].price || 0;
+                    } catch (e) {}
+                }
+            } catch (e) {}
             newDeal.order.push({
                 product: file,
                 product_title: displayName,
                 quantity: 1,
-                unit_price: 0,
+                unit_price: unitPrice,
                 currency: dealCurrency,
-                total: 0,
-                notes: ''
+                total: unitPrice,
+                notes: '',
+                _code: code
             });
-        });
+        };
 
         try {
             var result = await api.saveDeal(dir, newDeal);
@@ -851,20 +865,26 @@ async function handleAddSelectedToDeal() {
         try {
             var fullDeal = await api.getDeal(dir, deal.filename);
             var dealCurrency = fullDeal.currency || 'USD';
-            files.forEach(function(file) {
+            for (var fi2 = 0; fi2 < files.length; fi2++) {
+                var file2 = files[fi2];
                 // Skip if already in the deal
-                if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file; })) return;
-                var displayName = file.split('/').pop().replace(/\.prod$/, '');
+                if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file2; })) continue;
+                var displayName2 = file2.split('/').pop().replace(/\.prod$/, '');
+                var unitPrice2 = 0;
+                try {
+                    var hist2 = await api.getPriceHistory(file2);
+                    if (hist2 && hist2.length > 0) unitPrice2 = hist2[hist2.length - 1].price || 0;
+                } catch (e) {}
                 fullDeal.order.push({
-                    product: file,
-                    product_title: displayName,
+                    product: file2,
+                    product_title: displayName2,
                     quantity: 1,
-                    unit_price: 0,
+                    unit_price: unitPrice2,
                     currency: dealCurrency,
-                    total: 0,
+                    total: unitPrice2,
                     notes: ''
                 });
-            });
+            }
             var result = await api.saveDeal(dir, fullDeal);
             app.setState({ selectedFiles: [], selectMode: false, success: 'Added ' + files.length + ' product(s) to deal "' + result.title + '"!' });
         } catch (err) {
@@ -904,19 +924,25 @@ async function handleAddSelectedToDeal() {
                 try {
                     var fullDeal = await api.getDeal(dir, filename);
                     var dealCurrency = fullDeal.currency || 'USD';
-                    files.forEach(function(file) {
-                        if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file; })) return;
-                        var displayName = file.split('/').pop().replace(/\.prod$/, '');
+                    for (var fi3 = 0; fi3 < files.length; fi3++) {
+                        var file3 = files[fi3];
+                        if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file3; })) continue;
+                        var displayName3 = file3.split('/').pop().replace(/\.prod$/, '');
+                        var unitPrice3 = 0;
+                        try {
+                            var hist3 = await api.getPriceHistory(file3);
+                            if (hist3 && hist3.length > 0) unitPrice3 = hist3[hist3.length - 1].price || 0;
+                        } catch (e) {}
                         fullDeal.order.push({
-                            product: file,
-                            product_title: displayName,
+                            product: file3,
+                            product_title: displayName3,
                             quantity: 1,
-                            unit_price: 0,
+                            unit_price: unitPrice3,
                             currency: dealCurrency,
-                            total: 0,
+                            total: unitPrice3,
                             notes: ''
                         });
-                    });
+                    }
                     var result = await api.saveDeal(dir, fullDeal);
                     app.setState({ selectedFiles: [], selectMode: false, success: 'Added to deal "' + result.title + '"!' });
                 } catch (err) {
@@ -1205,6 +1231,13 @@ async function renderGallery() {
             items.push({ type: 'folder', data: item });
         });
     }
+    // Deal files (in Deals/ subfolder)
+    if (s.dealFiles && s.dealFiles.length > 0) {
+        s.dealFiles.forEach(function(df) {
+            items.push({ type: 'deal', data: df });
+        });
+    }
+    
     // Product files
     if (s.files.length > 0) {
         s.files.forEach(function(f) {
@@ -1258,7 +1291,25 @@ async function renderGallery() {
                 html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">No company.yaml</div>';
             }
             html += '</div></div>';
-        } else {
+        } else if (item.type === 'deal') {
+        var di = item.data;
+        var dealMeta = di.deal_info || {};
+        var dealName = di.name;
+        var statusEmoji = '⏳';
+        var statusColor = 'var(--text-muted)';
+        if (dealMeta.status === 'confirmed') { statusColor = 'var(--accent-green)'; statusEmoji = '✅'; }
+        else if (dealMeta.status === 'shipped') { statusColor = 'var(--accent-orange)'; statusEmoji = '🚚'; }
+        else if (dealMeta.status === 'completed') { statusColor = 'var(--accent-green)'; statusEmoji = '🎉'; }
+        else if (dealMeta.status === 'cancelled') { statusColor = 'var(--accent-red)'; statusEmoji = '🚫'; }
+        html += '<div class="product-card deal-card" data-deal-file="' + escapeHtml(di.name) + '">';
+        html += '<div class="card-thumb" style="background:var(--bg-surface);display:flex;align-items:center;justify-content:center"><span style="font-size:36px">📋</span></div>';
+        html += '<div class="card-body">';
+        html += '<div class="card-title">' + escapeHtml(dealMeta.title || dealName.replace(/\.deal$/, '')) + '</div>';
+        if (dealMeta.status) html += '<div class="card-code" style="font-size:12px;color:' + statusColor + ';font-weight:500">' + statusEmoji + ' ' + escapeHtml(dealMeta.status) + '</div>';
+        if (dealMeta.date) html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📅 ' + escapeHtml(dealMeta.date) + '</div>';
+        html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">📦 ' + (dealMeta.order_count || 0) + ' items · 📥 ' + (dealMeta.warehouse_records || 0) + ' warehouse</div>';
+        html += '</div></div>';
+    } else {
             productFiles.push(item.data);
         }
     });
@@ -1575,6 +1626,17 @@ function bindEvents() {
             return;
         }
 
+        // Deal card → open in company editor's deals tab
+        var dealFile = card.dataset.dealFile;
+        if (dealFile) {
+            var curDir = app.getState().currentDir;
+            if (curDir) {
+                companyEditorState._tab = 'deals';
+                openDealEditor(dealFile);
+            }
+            return;
+        }
+
         // Folder card → navigate into it
         var folder = card.dataset.folder;
         if (folder) {
@@ -1857,15 +1919,18 @@ async function loadDirectory(dir) {
     try {
         var items = await api.listItems(dir);
         var files = [];
+        var dealFiles = [];
         var subdirs = [];
         for (var item of items) {
-            if (item.type === 'file') {
+            if (item.type === 'file' && item.subtype === 'deal') {
+                dealFiles.push(item);
+            } else if (item.type === 'file') {
                 files.push(item.path);
             } else if (item.type === 'folder') {
                 subdirs.push(item);
             }
         }
-        app.setState({ currentDir: dir, files: files || [], subdirs: subdirs || [], loading: false });
+        app.setState({ currentDir: dir, files: files || [], dealFiles: dealFiles || [], subdirs: subdirs || [], loading: false });
     } catch (err) {
         app.setState({ currentDir: dir, files: [], subdirs: [], loading: false, error: 'Failed to load directory: ' + err.message });
     }
@@ -2618,16 +2683,26 @@ function renderDealOrderEditor(container) {
         html += '<div style="overflow-x:auto">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">';
         html += '<thead><tr style="background:var(--bg-hover);text-align:left">';
-        html += '<th style="padding:6px">Product</th><th style="padding:6px">Qty</th><th style="padding:6px">Unit Price</th><th style="padding:6px">Currency</th><th style="padding:6px">Total</th><th style="padding:6px">Notes</th><th style="padding:6px"></th>';
+        html += '<th style="padding:6px;width:200px">Product</th><th style="padding:6px">Min</th><th style="padding:6px">Qty</th><th style="padding:6px">Unit Price</th><th style="padding:6px">Cur</th><th style="padding:6px">Total</th><th style="padding:6px">Notes</th><th style="padding:6px">Photo</th><th style="padding:6px"></th>';
         html += '</tr></thead><tbody>';
         order.forEach(function(item, idx) {
+            var thumbHtml = '';
+            if (item._photo) {
+                thumbHtml = '<img src="' + item._photo + '" style="width:32px;height:32px;object-fit:cover;border-radius:4px;vertical-align:middle" />';
+            } else {
+                thumbHtml = '<span style="font-size:16px">📦</span>';
+            }
+            var titleText = item.product_title || item.product.split('/').pop().replace(/\.prod$/, '');
+            var codeText = item._code || '';
             html += '<tr data-order-idx="' + idx + '">';
-            html += '<td style="padding:4px"><input type="text" class="deal-order-product" value="' + escapeHtml(item.product || '') + '" placeholder="path/to/prod" style="width:140px;padding:3px 6px;font-size:12px" /></td>';
-            html += '<td style="padding:4px"><input type="number" class="deal-order-qty" value="' + (item.quantity || 0) + '" style="width:60px;padding:3px 6px;font-size:12px" /></td>';
-            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-price" value="' + (item.unit_price || 0) + '" style="width:80px;padding:3px 6px;font-size:12px" /></td>';
-            html += '<td style="padding:4px"><input type="text" class="deal-order-currency" value="' + escapeHtml(item.currency || '') + '" maxlength="3" style="width:50px;padding:3px 6px;font-size:12px" /></td>';
-            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-total" value="' + (item.total || 0) + '" style="width:90px;padding:3px 6px;font-size:12px" /></td>';
-            html += '<td style="padding:4px"><input type="text" class="deal-order-notes" value="' + escapeHtml(item.notes || '') + '" style="width:100px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><div style="display:flex;align-items:center;gap:6px"><div>' + thumbHtml + '</div><div><div style="font-weight:500;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">' + escapeHtml(titleText) + '</div>' + (codeText ? '<div style="font-size:10px;color:var(--text-muted)">' + escapeHtml(codeText) + '</div>' : '') + '</div></div></td>';
+            html += '<td style="padding:4px"><input type="number" class="deal-order-minqty" value="' + (item.min_qty || 0) + '" style="width:40px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" class="deal-order-qty" value="' + (item.quantity || 0) + '" style="width:50px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-price" value="' + (item.unit_price || 0) + '" style="width:70px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="text" class="deal-order-currency" value="' + escapeHtml(item.currency || '') + '" maxlength="3" style="width:40px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-total" value="' + (item.total || 0) + '" style="width:75px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="text" class="deal-order-notes" value="' + escapeHtml(item.notes || '') + '" style="width:70px;padding:3px 4px;font-size:12px" /></td>';
+            html += '<td style="padding:4px;text-align:center">' + thumbHtml + '</td>';
             html += '<td style="padding:4px"><button class="btn btn-xs btn-danger" data-action="remove-order-item" data-idx="' + idx + '">✕</button></td>';
             html += '</tr>';
         });
@@ -2748,6 +2823,7 @@ function gatherDealFormData(deal) {
             product: (row.querySelector('.deal-order-product') || {}).value || '',
             product_title: '',
             quantity: parseInt((row.querySelector('.deal-order-qty') || {}).value) || 0,
+            min_qty: parseInt((row.querySelector('.deal-order-minqty') || {}).value) || 0,
             unit_price: parseFloat((row.querySelector('.deal-order-price') || {}).value) || 0,
             currency: (row.querySelector('.deal-order-currency') || {}).value || '',
             total: parseFloat((row.querySelector('.deal-order-total') || {}).value) || 0,
@@ -2831,7 +2907,7 @@ function showProductPickerForDeal(dir, deal) {
 
     document.getElementById('picker-close-btn').addEventListener('click', closeProductPicker);
     document.getElementById('picker-cancel-btn').addEventListener('click', closeProductPicker);
-    document.getElementById('picker-add-to-deal-btn').addEventListener('click', function() {
+    document.getElementById('picker-add-to-deal-btn').addEventListener('click', async function() {
         var cbs = document.querySelectorAll('.picker-item-cb:checked');
         if (cbs.length === 0) { closeProductPicker(); return; }
 
@@ -2839,21 +2915,46 @@ function showProductPickerForDeal(dir, deal) {
         var dealCurrency = document.getElementById('deal-currency-input');
         var defaultCur = dealCurrency ? dealCurrency.value.trim().toUpperCase() : 'USD';
 
-        cbs.forEach(function(cb) {
-            var filePath = cb.value;
+        for (var ci = 0; ci < cbs.length; ci++) {
+            var filePath = cbs[ci].value;
             // Check if already exists — skip if so
-            if (deal.order.some(function(o) { return o.product === filePath; })) return;
+            if (deal.order.some(function(o) { return o.product === filePath; })) continue;
             var displayName = filePath.split('/').pop().replace(/\.prod$/, '');
+            
+            // Try to load product data to get price, code, photo
+            var unitPrice = 0;
+            var code = '';
+            var firstPhoto = null;
+            try {
+                var prodData = await api.openProduct(filePath);
+                code = prodData.code || '';
+                if (prodData.photos && prodData.photos.length > 0) {
+                    firstPhoto = prodData.photos[0];
+                }
+                // Get latest price
+                if (prodData.priceCount > 0) {
+                    try {
+                        var hist = await api.getPriceHistory(filePath);
+                        if (hist && hist.length > 0) {
+                            var latest = hist[hist.length - 1];
+                            unitPrice = latest.price || 0;
+                        }
+                    } catch (e) { /* ignore price fetch errors */ }
+                }
+            } catch (e) { /* product might not be loadable */ }
+            
             deal.order.push({
                 product: filePath,
                 product_title: displayName,
                 quantity: 1,
-                unit_price: 0,
+                unit_price: unitPrice,
                 currency: defaultCur,
-                total: 0,
-                notes: ''
+                total: unitPrice,
+                notes: '',
+                _photo: firstPhoto,
+                _code: code
             });
-        });
+        }
 
         closeProductPicker();
         renderDealOrderEditor(document.getElementById('tab-content'));
