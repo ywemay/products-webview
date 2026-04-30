@@ -65,9 +65,9 @@ def list_items(dir_path: str) -> list[dict]:
                 "path": full_path,
                 "company": None,
             }
-            # Try to load company.yaml
-            company_yaml = os.path.join(full_path, "company.yaml")
-            if os.path.isfile(company_yaml):
+            # Try to load .comp file
+            company_comp = Company.find_company_file(full_path)
+            if company_comp:
                 try:
                     c = Company.load(full_path)
                     item["company"] = {

@@ -110,7 +110,7 @@ def api_list_subdirs():
 
 @bottle_app.post("/api/list-items")
 def api_list_items():
-    """Return combined list of subdirectories (with company.yaml info) and .prod files."""
+    """Return combined list of subdirectories (with .comp file info) and .prod files."""
     body = request.json or {}
     return json_ok(store.list_items(body.get("dir", "")))
 
@@ -378,7 +378,7 @@ def api_health():
 # Company CRUD -----------------------------------------------------------
 @bottle_app.post("/api/company")
 def api_get_company():
-    """GET company.yaml data from a directory."""
+    """GET .comp file data from a directory."""
     body = request.json or {}
     directory = body.get("dir", "")
     if not directory:
@@ -392,7 +392,7 @@ def api_get_company():
 
 @bottle_app.post("/api/company/save")
 def api_save_company():
-    """Save company.yaml to a directory."""
+    """Save .comp file to a directory."""
     body = request.json or {}
     directory = body.get("dir", "")
     if not directory:
@@ -417,7 +417,7 @@ def api_save_company():
 # Contact CRUD -----------------------------------------------------------
 @bottle_app.post("/api/company/contact/add")
 def api_add_contact():
-    """Add a contact to company.yaml."""
+    """Add a contact to a .comp file."""
     body = request.json or {}
     directory = body.get("dir", "")
     if not directory:
@@ -435,7 +435,7 @@ def api_add_contact():
 
 @bottle_app.post("/api/company/contact/update")
 def api_update_contact():
-    """Update a contact by index in company.yaml."""
+    """Update a contact by index in a .comp file."""
     body = request.json or {}
     directory = body.get("dir", "")
     index = body.get("index")
@@ -456,7 +456,7 @@ def api_update_contact():
 
 @bottle_app.post("/api/company/contact/delete")
 def api_delete_contact():
-    """Delete a contact by index from company.yaml."""
+    """Delete a contact by index from a .comp file."""
     body = request.json or {}
     directory = body.get("dir", "")
     index = body.get("index")

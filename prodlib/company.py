@@ -1,6 +1,6 @@
 """Company YAML management for product directory subfolders.
 
-Each subdirectory can contain a company.yaml file with:
+Each subdirectory can contain a <company-name>.comp file with:
   company:
     name: str
     address: str
@@ -76,9 +76,9 @@ class Contact:
 
 
 class Company:
-    """Represents a company.yaml file in a product subdirectory."""
+    """Represents a <company-name>.comp file in a product subdirectory."""
 
-    def __init__(self, directory: str):
+    def __init__(self, directory: str, filename: str = ""):
         self.directory = directory
         self.name: str = ""
         self.address: str = ""
@@ -87,14 +87,27 @@ class Company:
         self.emails: list = []
         self.phones: list = []
         self.contacts: list = []
+        self.filename: str = filename or ""  # e.g. "company-name.comp"
+
+    @staticmethod
+    def find_company_file(directory: str) -> str:
+        """Find a .comp file in the given directory. Returns the full path or empty string."""
+        try:
+            for name in os.listdir(directory):
+                if name.endswith(".comp") and os.path.isfile(os.path.join(directory, name)):
+                    return os.path.join(directory, name)
+        except FileNotFoundError:
+            pass
+        return ""
 
     @classmethod
     def load(cls, directory: str) -> "Company":
-        """Load company.yaml from a directory. Returns a Company instance
-        with default values if the file doesn't exist."""
+        """Load a .comp file from a directory. Returns a Company instance
+        with default values if no .comp file exists."""
         c = cls(directory)
-        yaml_path = os.path.join(directory, "company.yaml")
-        if os.path.isfile(yaml_path):
+        yaml_path = cls.find_company_file(directory)
+        if yaml_path:
+            c.filename = os.path.basename(yaml_path)
             with open(yaml_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             company_data = data.get("company", {})
@@ -109,9 +122,15 @@ class Company:
         return c
 
     def save(self):
-        """Save the Company data to company.yaml in the directory."""
+        """Save the Company data to a .comp file in the directory."""
         os.makedirs(self.directory, exist_ok=True)
-        yaml_path = os.path.join(self.directory, "company.yaml")
+        if not self.filename and self.name:
+            safe_name = self.name.lower().replace(" ", "-").replace("[", "").replace("]", "").replace("(", "").replace(")", "").replace("&", "and")
+            safe_name = "".join(c for c in safe_name if c.isalnum() or c in "-._")
+            self.filename = f"{safe_name}.comp"
+        if not self.filename:
+            self.filename = "untitled.comp"
+        yaml_path = os.path.join(self.directory, self.filename)
         company_section = {}
         if self.name:
             company_section["name"] = self.name
@@ -148,4 +167,5 @@ class Company:
             "phones": self.phones,
             "contacts": [c.to_dict() for c in self.contacts],
             "contactCount": len(self.contacts),
+            "filename": self.filename,
         }

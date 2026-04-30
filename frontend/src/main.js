@@ -782,7 +782,7 @@ async function handleAddSelectedToDeal() {
     var dir = s.currentDir;
     if (!dir || files.length === 0) return;
 
-    // Check if current directory has a company.yaml
+    // Check if current directory has a .comp file
     try {
         var company = await api.getCompany(dir);
     } catch (err) {
@@ -1204,7 +1204,7 @@ async function renderGallery() {
 
     var currentDir = app.getState().currentDir;
 
-    // Fetch current directory's company.yaml (if it exists)
+    // Fetch current directory's .comp file (if it exists)
     var currentCompany = null;
     try {
         currentCompany = await api.getCompany(currentDir);
@@ -1251,10 +1251,11 @@ async function renderGallery() {
     var productFiles = [];
     items.forEach(function(item) {
         if (item.type === 'current-company') {
-            // Current-dir company card — click opens editor
+            // Current-dir company card — click opens externally in company-editor
             var c = item.data;
+            var compFilePath = (c.filename && currentDir) ? currentDir + '/' + c.filename : '';
             var typeLabel = c.company_type ? c.company_type.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : '';
-            html += '<div class="product-card current-company-card" data-action="open-company-editor">';
+            html += '<div class="product-card current-company-card" data-action="open-company-editor"' + (compFilePath ? ' data-company-path="' + escapeHtml(compFilePath) + '"' : '') + '>';
             html += '<div class="card-thumb" style="background:linear-gradient(135deg,var(--accent),var(--accent-hover));display:flex;align-items:center;justify-content:center"><span style="font-size:36px">🏢</span></div>';
             html += '<div class="card-body">';
             html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name) + '</div>';
@@ -1284,7 +1285,7 @@ async function renderGallery() {
                 }
                 html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">👤 ' + (companyInfo.contactCount || 0) + ' contacts</div>';
             } else {
-                html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">No company.yaml</div>';
+                html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">No company</div>';
             }
             html += '</div></div>';
         } else if (item.type === 'deal') {
@@ -1297,7 +1298,8 @@ async function renderGallery() {
         else if (dealMeta.status === 'shipped') { statusColor = 'var(--accent-orange)'; statusEmoji = '🚚'; }
         else if (dealMeta.status === 'completed') { statusColor = 'var(--accent-green)'; statusEmoji = '🎉'; }
         else if (dealMeta.status === 'cancelled') { statusColor = 'var(--accent-red)'; statusEmoji = '🚫'; }
-        html += '<div class="product-card deal-card" data-deal-file="' + escapeHtml(di.name) + '">';
+        var dealFilePath = (currentDir + '/Deals/' + di.name);
+        html += '<div class="product-card deal-card" data-deal-file="' + escapeHtml(di.name) + '" data-deal-path="' + escapeHtml(dealFilePath) + '">';
         html += '<div class="card-thumb" style="background:var(--bg-surface);display:flex;align-items:center;justify-content:center"><span style="font-size:36px">📋</span></div>';
         html += '<div class="card-body">';
         html += '<div class="card-title">' + escapeHtml(dealMeta.title || dealName.replace(/\.deal$/, '')) + '</div>';
@@ -1404,6 +1406,25 @@ async function getLatestPriceForCard(file, card) {
     }
 }
 
+// ========== UTILITY — Find .comp file in directory ==========
+
+var Company = {
+    findCompanyFile: function(dir) {
+        // Remove trailing slash
+        dir = dir.replace(/\/$/, '');
+        // First check for a .comp file directly in the directory
+        var files = app.getState().files || [];
+        var compFile = files.find(function(f) {
+            return typeof f === 'string' && f.endsWith('.comp');
+        });
+        if (compFile) {
+            return dir + '/' + compFile;
+        }
+        // Fallback: ask the server (async, not ideal, but sync fallback)
+        return dir + '/*.comp';
+    }
+};
+
 // ========== GALLERY CARD CLICK → EDITOR ==========
 
 function openProductEditor(file) {
@@ -1509,13 +1530,20 @@ function bindEvents() {
                 var esub = btn.dataset.subdir;
                 if (esub) {
                     var eDir = app.getState().currentDir;
-                    handleOpenCompanyEditor(eDir + '/' + esub);
+                    var subdirPath = eDir + '/' + esub;
+                    var compFile = Company.findCompanyFile(subdirPath);
+                    if (compFile) {
+                        api.openSystem(compFile);
+                    }
                 }
                 break;
             case 'edit-current-company':
                 var curDir = app.getState().currentDir;
                 if (curDir) {
-                    handleOpenCompanyEditor(curDir);
+                    var compFile = Company.findCompanyFile(curDir);
+                    if (compFile) {
+                        api.openSystem(compFile);
+                    }
                 }
                 break;
             case 'create-current-company':
@@ -1594,21 +1622,32 @@ function bindEvents() {
         var card = e.target.closest('.product-card');
         if (!card) return;
 
-        // Current-company card → open company editor
+        // Current-company card → open externally in company-editor
         if (card.dataset.action === 'open-company-editor') {
             var curDir = app.getState().currentDir;
             if (curDir) {
-                handleOpenCompanyEditor(curDir);
+                var companyPath = card.dataset.companyPath;
+                if (companyPath) {
+                    api.openSystem(companyPath);
+                } else {
+                    // Fallback: find .comp file in directory via API
+                    api.getCompany(curDir).then(function(c) {
+                        if (c && c.filename) {
+                            api.openSystem(curDir + '/' + c.filename);
+                        }
+                    }).catch(function() {});
+                }
             }
             return;
         }
 
-        // Deal card → open in company editor's deals tab
+        // Deal card → open externally in deal-editor
         var dealFile = card.dataset.dealFile;
         if (dealFile) {
             var curDir = app.getState().currentDir;
-            if (curDir) {
-                openCompanyDealFromGallery(curDir, dealFile);
+            if (curDir && dealFile) {
+                var dealPath = card.dataset.dealPath || curDir + '/Deals/' + dealFile;
+                api.openSystem(dealPath);
             }
             return;
         }
@@ -2237,143 +2276,40 @@ function _showPromptDialog(msg, defaultVal) {
 // ========== COMPANY EDITOR ==========
 
 function renderCompanyEditor(container) {
-    var c = companyEditorState.company;
-    if (!c) {
-        container.innerHTML = '<div class="empty-tab">Loading company data...</div>';
+    var dir = companyEditorState.directory || app.getState().currentDir;
+    if (!dir) {
+        container.innerHTML = '<div class="empty-tab">No directory selected.</div>';
         return;
     }
 
-    var tab = companyEditorState._tab || 'info';
-    var dir = companyEditorState.directory;
-
-    // Company tab bar
-    var html = '<div class="company-editor-tabs" style="display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:4px">';
-    html += '<button class="tab-btn ' + (tab === 'info' ? 'active' : '') + '" data-company-tab="info">🏢 Info</button>';
-    html += '<button class="tab-btn ' + (tab === 'deals' ? 'active' : '') + '" data-company-tab="deals">📋 Deals</button>';
-    html += '<button class="tab-btn ' + (tab === 'warehouse' ? 'active' : '') + '" data-company-tab="warehouse">📦 Warehouse</button>';
-    html += '</div>';
-
-    if (tab === 'deals') {
-        renderDealsList(container);
-        return;
-    }
-    if (tab === 'warehouse') {
-        renderWarehouseTab(container);
-        return;
-    }
-
-    // ==== INFO TAB ====
-    html += '<div class="company-editor">';
-    
-    // Company info
-    html += '<div class="section-header">🏢 Company Information</div>';
-    html += '<div class="form-row">';
-    html += '<div class="form-group" style="flex:2"><label>Company Name</label><input type="text" id="company-name-input" value="' + escapeHtml(c.name) + '" /></div>';
-    html += '<div class="form-group" style="flex:1"><label>Website</label><input type="text" id="company-website-input" value="' + escapeHtml(c.website || '') + '" /></div>';
-    html += '</div>';
-    
-    // Company Type + Address in one row
-    html += '<div class="form-row">';
-    html += '<div class="form-group" style="flex:1"><label>Company Type</label>';
-    html += '<select id="company-type-select" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary);font-size:13px">';
-    var types = ['', 'customer', 'supplier', 'shipping_company', 'bank', 'post_office', 'other'];
-    var currentType = c.company_type || '';
-    types.forEach(function(t) {
-        var label = t ? t.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : '— Select Type —';
-        html += '<option value="' + escapeHtml(t) + '"' + (currentType === t ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
-    });
-    html += '</select></div>';
-    html += '<div class="form-group" style="flex:2"><label>Address</label><input type="text" id="company-address-input" value="' + escapeHtml(c.address || '') + '" /></div>';
-    html += '</div>';
-    
-    // Emails and Phones in the same row
-    html += '<div class="form-row" style="gap:16px">';
-    html += '<div class="form-group" style="flex:1"><label>Emails</label>';
-    html += '<div id="company-emails-list">';
-    if (c.emails && c.emails.length > 0) {
-        c.emails.forEach(function(email, idx) {
-            html += '<div class="contact-field-row"><input type="text" class="company-email-input" value="' + escapeHtml(email) + '" data-idx="' + idx + '" placeholder="email@example.com" /><button class="btn btn-xs btn-danger" data-action="company-remove-email" data-idx="' + idx + '">✕</button></div>';
-        });
+    var compFile = Company.findCompanyFile(dir);
+    var html = '<div class="company-editor">';
+    html += '<div class="section-header">🏢 Company — ' + escapeHtml(dir.split('/').pop()) + '</div>';
+    html += '<div style="padding:16px;text-align:center">';
+    html += '<p style="color:var(--text-secondary);margin-bottom:16px">Company information is now edited in the dedicated <strong>Company Editor</strong> application.</p>';
+    if (compFile && compFile.endsWith('.comp')) {
+        html += '<button class="btn btn-primary" data-action="open-comp-external" data-comp-path="' + escapeHtml(dir + '/' + compFile) + '" style="font-size:15px;padding:10px 24px">🏢 Open in Company Editor</button>';
     } else {
-        html += '<div class="contact-field-row"><input type="text" class="company-email-input" data-idx="0" placeholder="email@example.com" /></div>';
+        html += '<p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">Right-click a company .comp file in the gallery and open with Company Editor.</p>';
     }
     html += '</div>';
-    html += '<button class="btn btn-sm" data-action="company-add-email" style="margin-top:4px;font-size:12px">➕ Add Email</button></div>';
-    html += '<div class="form-group" style="flex:1"><label>Phones</label>';
-    html += '<div id="company-phones-list">';
-    if (c.phones && c.phones.length > 0) {
-        c.phones.forEach(function(phone, idx) {
-            html += '<div class="contact-field-row"><input type="text" class="company-phone-input" value="' + escapeHtml(phone) + '" data-idx="' + idx + '" placeholder="+123456789" /><button class="btn btn-xs btn-danger" data-action="company-remove-phone" data-idx="' + idx + '">✕</button></div>';
-        });
-    } else {
-        html += '<div class="contact-field-row"><input type="text" class="company-phone-input" data-idx="0" placeholder="+123456789" /></div>';
-    }
+    html += '<div style="margin-top:16px;padding:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius)">';
+    html += '<div class="section-header">📋 Deals</div>';
+    html += '<div id="company-deals-list">Loading...</div>';
     html += '</div>';
-    html += '<button class="btn btn-sm" data-action="company-add-phone" style="margin-top:4px;font-size:12px">➕ Add Phone</button></div>';
     html += '</div>';
-
-    html += '<button class="btn btn-primary" id="company-save-btn" style="margin-top:8px">💾 Save Company</button>';
-
-    // Contacts section — grid layout
-    html += '<div class="section-header" style="margin-top:24px">👤 Contacts</div>';
-
-    if (c.contacts && c.contacts.length > 0) {
-        html += '<div class="contacts-grid">';
-        c.contacts.forEach(function(contact, idx) {
-            html += '<div class="contact-card" data-contact-idx="' + idx + '">';
-            html += '<div class="contact-header"><strong>' + escapeHtml(contact.fn || 'Unnamed') + '</strong>';
-            html += '<div class="contact-actions">';
-            html += '<button class="btn btn-xs" data-action="company-edit-contact" data-idx="' + idx + '">✏️</button>';
-            html += '<button class="btn btn-xs btn-danger" data-action="company-delete-contact" data-idx="' + idx + '">🗑</button>';
-            html += '</div></div>';
-            if (contact.tel) html += '<div class="contact-detail">📞 ' + escapeHtml(contact.tel) + '</div>';
-            if (contact.email) html += '<div class="contact-detail">✉️ ' + escapeHtml(contact.email) + '</div>';
-            if (contact.org) html += '<div class="contact-detail">🏢 ' + escapeHtml(contact.org) + '</div>';
-            if (contact.role) html += '<div class="contact-detail">🎯 ' + escapeHtml(contact.role) + '</div>';
-            html += '</div>';
-        });
-        html += '</div>';
-    } else {
-        html += '<div class="empty-tab" style="padding:12px">No contacts yet.</div>';
-    }
-
-    html += '<button class="btn btn-primary" id="company-add-contact-btn" style="margin-top:8px">➕ Add Contact</button>';
-
-    // Contact editor form
-    html += '<div id="contact-editor" style="display:none;margin-top:16px;padding:16px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius)">';
-    html += '<div class="section-header" id="contact-editor-title">Add Contact</div>';
-    html += '<div class="form-row"><div class="form-group"><label>Full Name *</label><input type="text" id="contact-fn-input" /></div>';
-    html += '<div class="form-group"><label>Structured Name (n)</label><input type="text" id="contact-n-input" /></div></div>';
-    html += '<div class="form-row"><div class="form-group"><label>Phone</label><input type="text" id="contact-tel-input" /></div>';
-    html += '<div class="form-group"><label>Email</label><input type="text" id="contact-email-input" /></div></div>';
-    html += '<div class="form-row"><div class="form-group"><label>Organization</label><input type="text" id="contact-org-input" /></div>';
-    html += '<div class="form-group"><label>Role</label><input type="text" id="contact-role-input" /></div></div>';
-    html += '<div class="form-row"><div class="form-group"><label>Job Title</label><input type="text" id="contact-title-input" /></div>';
-    html += '<div class="form-group"><label>Address</label><input type="text" id="contact-adr-input" /></div></div>';
-    html += '<div class="form-row"><div class="form-group"><label>Note</label><input type="text" id="contact-note-input" /></div>';
-    html += '<div class="form-group"><label>Birthday</label><input type="text" id="contact-bday-input" placeholder="YYYY-MM-DD" /></div></div>';
-    html += '<div class="form-row"><div class="form-group"><label>URL</label><input type="text" id="contact-url-input" /></div>';
-    html += '<div class="form-group"><label>Categories</label><input type="text" id="contact-categories-input" /></div></div>';
-    html += '<div class="form-row" style="margin-top:12px">';
-    html += '<button class="btn btn-primary" id="contact-save-btn">💾 Save Contact</button>';
-    html += '<button class="btn" id="contact-cancel-btn">Cancel</button>';
-    html += '<span id="contact-form-status" style="margin-left:12px;font-size:0.9em"></span>';
-    html += '</div></div>';
-
-    html += '</div>'; // company-editor close
-    
     container.innerHTML = html;
-    
-    // Wire up
-    document.getElementById('company-save-btn').addEventListener('click', handleCompanySave);
-    document.getElementById('company-add-contact-btn').addEventListener('click', function() { showContactForm(-1); });
-    document.getElementById('contact-save-btn').addEventListener('click', handleContactSave);
-    document.getElementById('contact-cancel-btn').addEventListener('click', hideContactForm);
-    var addEmailBtn = document.querySelector('[data-action="company-add-email"]');
-    if (addEmailBtn) addEmailBtn.addEventListener('click', handleCompanyAddEmail);
-    var addPhoneBtn = document.querySelector('[data-action="company-add-phone"]');
-    if (addPhoneBtn) addPhoneBtn.addEventListener('click', handleCompanyAddPhone);
-    wireCompanyTabs();
+
+    // Wire up open in editor button
+    var openBtn = container.querySelector('[data-action="open-comp-external"]');
+    if (openBtn) {
+        openBtn.addEventListener('click', function() {
+            api.openSystem(openBtn.dataset.compPath);
+        });
+    }
+
+    // Load and render deals list
+    loadDealsForCompany(dir);
 }
 
 var _dealEditorState = null; // { deal: {}, isNew: bool }
