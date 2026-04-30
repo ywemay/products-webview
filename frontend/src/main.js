@@ -952,26 +952,21 @@ async function renderGallery() {
     var productFiles = [];
     items.forEach(function(item) {
         if (item.type === 'current-company') {
-            // Current-dir company card (non-clickable overview)
+            // Current-dir company card — click opens editor
             var c = item.data;
             var typeLabel = c.company_type ? c.company_type.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : '';
-            html += '<div class="product-card current-company-card">';
+            html += '<div class="product-card current-company-card" data-action="open-company-editor">';
             html += '<div class="card-thumb" style="background:linear-gradient(135deg,var(--accent),var(--accent-hover));display:flex;align-items:center;justify-content:center"><span style="font-size:36px">🏢</span></div>';
             html += '<div class="card-body">';
             html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name) + '</div>';
-            if (typeLabel) html += '<div class="card-code" style="font-size:11px;color:var(--text-secondary)">' + escapeHtml(typeLabel) + '</div>';
+            // Show company type prominently
+            html += '<div class="card-code" style="font-size:13px;color:var(--text-secondary);font-weight:600">' + escapeHtml(typeLabel || 'Company') + '</div>';
             if (c.address) {
-                var addrTrunc = c.address.length > 35 ? c.address.substring(0, 35) + '…' : c.address;
-                html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📍 ' + escapeHtml(addrTrunc) + '</div>';
+                var addrTrunc = c.address.length > 40 ? c.address.substring(0, 40) + '…' : c.address;
+                html += '<div class="card-no-price" style="font-size:12px;color:var(--text-secondary);margin-top:4px">📍 ' + escapeHtml(addrTrunc) + '</div>';
             }
-            html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">👤 ' + (c.contactCount || 0) + ' contacts</div>';
-            if (c.website) html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔗 ' + escapeHtml(c.website) + '</div>';
-            if (c.emails && c.emails.length > 0) {
-                html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✉️ ' + escapeHtml(c.emails[0]) + '</div>';
-            }
-            html += '<div style="margin-top:8px;display:flex;gap:6px">';
-            html += '<button class="btn btn-xs" data-action="edit-current-company" style="font-size:11px;padding:3px 8px">📝 Edit Company</button>';
-            html += '</div>';
+            html += '<div class="card-no-price" style="font-size:12px;color:var(--text-muted)">👤 ' + (c.contactCount || 0) + ' contacts</div>';
+            if (c.website) html += '<div class="card-no-price" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔗 ' + escapeHtml(c.website) + '</div>';
             html += '</div></div>';
         } else if (item.type === 'folder') {
             var d = item.data;
@@ -1299,6 +1294,15 @@ function bindEvents() {
     body.addEventListener('click', function(e) {
         var card = e.target.closest('.product-card');
         if (!card) return;
+
+        // Current-company card → open company editor
+        if (card.dataset.action === 'open-company-editor') {
+            var curDir = app.getState().currentDir;
+            if (curDir) {
+                handleOpenCompanyEditor(curDir);
+            }
+            return;
+        }
 
         // Folder card → navigate into it
         var folder = card.dataset.folder;
