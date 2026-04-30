@@ -1068,6 +1068,15 @@ select option {
     background: #e06c8a;
 }
 
+.btn-accent {
+    background: var(--accent);
+    color: #1e1e2e;
+    border: none;
+}
+.btn-accent:hover {
+    background: var(--accent-hover);
+}
+
 /* Card checkbox */
 .product-card .card-check {
     position: absolute;

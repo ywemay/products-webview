@@ -740,6 +740,7 @@ function renderGalleryHeader() {
             <button class="btn btn-sm" data-action="deselect-all">✕ Deselect</button>
             <button class="btn btn-sm btn-primary" data-action="copy-selected">📋 Copy</button>
             <button class="btn btn-sm btn-primary" data-action="cut-selected">✂️ Cut</button>
+            <button class="btn btn-sm btn-accent" data-action="add-to-deal">📋 Add to Deal</button>
             <button class="btn btn-sm btn-danger" data-action="delete-selected">🗑 Delete</button>
         `;
     } else {
@@ -777,6 +778,157 @@ function getSelectedFiles() {
 
 function isFileSelected(file) {
     return app.getState().selectedFiles.indexOf(file) !== -1;
+}
+
+async function handleAddSelectedToDeal() {
+    var s = app.getState();
+    var files = s.selectedFiles;
+    var dir = s.currentDir;
+    if (!dir || files.length === 0) return;
+
+    // Check if current directory has a company.yaml
+    try {
+        var company = await api.getCompany(dir);
+    } catch (err) {
+        alert('This directory does not have a company. Create one first.');
+        return;
+    }
+
+    // Get deals list
+    var deals;
+    try {
+        deals = await api.listDeals(dir);
+    } catch (err) {
+        // No Deals folder yet — create a new deal
+        deals = [];
+    }
+
+    // Filter pending/confirmed deals
+    var activeDeals = deals.filter(function(d) {
+        return d.status === 'pending' || d.status === 'confirmed';
+    });
+
+    if (activeDeals.length === 0) {
+        // Create a new deal automatically
+        var today = new Date().toISOString().slice(0, 10);
+        var newDeal = {
+            title: 'Quick Order ' + today,
+            date: today,
+            status: 'pending',
+            currency: 'USD',
+            additional_costs: 0,
+            additional_costs_currency: '',
+            notes: 'Created from selection',
+            order: [],
+            warehouse: [],
+            filename: today + '-Quick_Order.deal'
+        };
+
+        // Add selected files as order items
+        var dealCurrency = s.settings.currency || 'USD';
+        files.forEach(function(file) {
+            var displayName = file.split('/').pop().replace(/\.prod$/, '');
+            newDeal.order.push({
+                product: file,
+                product_title: displayName,
+                quantity: 1,
+                unit_price: 0,
+                currency: dealCurrency,
+                total: 0,
+                notes: ''
+            });
+        });
+
+        try {
+            var result = await api.saveDeal(dir, newDeal);
+            app.setState({ selectedFiles: [], selectMode: false, success: 'Deal "' + result.title + '" created with ' + files.length + ' product(s)!' });
+        } catch (err) {
+            app.setState({ error: 'Failed to create deal: ' + err.message });
+        }
+    } else if (activeDeals.length === 1) {
+        // Auto-add to the only active deal
+        var deal = activeDeals[0];
+        try {
+            var fullDeal = await api.getDeal(dir, deal.filename);
+            var dealCurrency = fullDeal.currency || 'USD';
+            files.forEach(function(file) {
+                // Skip if already in the deal
+                if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file; })) return;
+                var displayName = file.split('/').pop().replace(/\.prod$/, '');
+                fullDeal.order.push({
+                    product: file,
+                    product_title: displayName,
+                    quantity: 1,
+                    unit_price: 0,
+                    currency: dealCurrency,
+                    total: 0,
+                    notes: ''
+                });
+            });
+            var result = await api.saveDeal(dir, fullDeal);
+            app.setState({ selectedFiles: [], selectMode: false, success: 'Added ' + files.length + ' product(s) to deal "' + result.title + '"!' });
+        } catch (err) {
+            app.setState({ error: 'Failed: ' + err.message });
+        }
+    } else {
+        // Multiple active deals — show a picker
+        var overlay = document.getElementById('deal-picker-overlay') || null;
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'deal-picker-overlay';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:center;justify-content:center';
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) overlay.style.display = 'none';
+            });
+        }
+
+        var h = '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);width:450px;padding:16px">';
+        h += '<strong>📋 Select Deal</strong>';
+        h += '<p style="font-size:13px;color:var(--text-muted);margin:8px 0">Multiple active deals found. Which one should receive the products?</p>';
+        activeDeals.forEach(function(d) {
+            h += '<div class="deal-option" data-file="' + escapeHtml(d.filename) + '" style="padding:10px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer">';
+            h += '<strong>' + escapeHtml(d.title || d.filename) + '</strong>';
+            h += ' <span style="font-size:12px;color:var(--text-muted)">(' + escapeHtml(d.date) + ', ' + d.order_count + ' items)</span>';
+            h += '</div>';
+        });
+        h += '<button class="btn" id="deal-picker-cancel" style="margin-top:8px">Cancel</button>';
+        h += '</div>';
+        overlay.innerHTML = h;
+        overlay.style.display = 'flex';
+
+        overlay.querySelectorAll('.deal-option').forEach(function(el) {
+            el.addEventListener('click', async function() {
+                overlay.style.display = 'none';
+                var filename = el.dataset.file;
+                try {
+                    var fullDeal = await api.getDeal(dir, filename);
+                    var dealCurrency = fullDeal.currency || 'USD';
+                    files.forEach(function(file) {
+                        if (fullDeal.order && fullDeal.order.some(function(o) { return o.product === file; })) return;
+                        var displayName = file.split('/').pop().replace(/\.prod$/, '');
+                        fullDeal.order.push({
+                            product: file,
+                            product_title: displayName,
+                            quantity: 1,
+                            unit_price: 0,
+                            currency: dealCurrency,
+                            total: 0,
+                            notes: ''
+                        });
+                    });
+                    var result = await api.saveDeal(dir, fullDeal);
+                    app.setState({ selectedFiles: [], selectMode: false, success: 'Added to deal "' + result.title + '"!' });
+                } catch (err) {
+                    app.setState({ error: 'Failed: ' + err.message });
+                }
+            });
+        });
+
+        document.getElementById('deal-picker-cancel').addEventListener('click', function() {
+            overlay.style.display = 'none';
+        });
+    }
 }
 
 async function handleDeleteSelected() {
@@ -1317,6 +1469,7 @@ function bindEvents() {
             case 'copy-selected': handleCopySelected(); break;
             case 'cut-selected': handleCutSelected(); break;
             case 'paste-files': handlePasteFiles(); break;
+            case 'add-to-deal': handleAddSelectedToDeal(); break;
             case 'deselect-all':
                 app.setState({ selectedFiles: [], selectMode: false });
                 break;
@@ -2430,6 +2583,9 @@ function renderDealOrderEditor(container) {
     // Deal metadata
     html += '<div class="form-row">';
     html += '<div class="form-group" style="flex:2"><label>Title</label><input type="text" id="deal-title-input" value="' + escapeHtml(deal.title) + '" /></div>';
+    if (deal.filename) {
+        html += '<div class="form-group" style="flex:1"><label>Filename</label><input type="text" id="deal-filename-input" value="' + escapeHtml(deal.filename) + '" style="font-size:11px" /></div>';
+    }
     html += '<div class="form-group" style="flex:1"><label>Date</label><input type="date" id="deal-date-input" value="' + escapeHtml(deal.date || '') + '" /></div>';
     html += '<div class="form-group" style="flex:1"><label>Status</label>';
     html += '<select id="deal-status-select" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary);font-size:13px">';
@@ -2452,7 +2608,7 @@ function renderDealOrderEditor(container) {
     // Order items section
     html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
     html += '<span>📦 Order Items</span>';
-    html += '<button class="btn btn-sm btn-primary" data-action="add-order-item">➕ Add Item</button>';
+    html += '<div><button class="btn btn-sm" data-action="browse-products" style="margin-right:6px">📂 Browse Products</button><button class="btn btn-sm btn-primary" data-action="add-order-item">➕ Add Item</button></div>';
     html += '</div>';
 
     var order = deal.order || [];
@@ -2529,6 +2685,12 @@ function wireDealOrderEditor(dir) {
         renderDealOrderEditor(document.getElementById('tab-content'));
     });
 
+    // Browse products button
+    var browseBtn = document.querySelector('[data-action="browse-products"]');
+    if (browseBtn) browseBtn.addEventListener('click', function() {
+        showProductPickerForDeal(dir, deal);
+    });
+
     // Remove order items (delegated)
     var container = document.getElementById('tab-content');
     container.querySelectorAll('[data-action="remove-order-item"]').forEach(function(btn) {
@@ -2545,8 +2707,12 @@ function wireDealOrderEditor(dir) {
         var statusEl = document.getElementById('deal-save-status');
         statusEl.textContent = 'Saving...';
         try {
-            // Generate filename if new
-            if (_dealEditorState.isNew && !deal.filename) {
+            // Always update filename from form (if filename input visible) or auto-generate
+            var fnFromInput = document.getElementById('deal-filename-input');
+            if (fnFromInput) {
+                deal.filename = fnFromInput.value.trim();
+            }
+            if (!deal.filename) {
                 deal.filename = generateDealFilename(deal);
             }
             var result = await api.saveDeal(dir, deal);
@@ -2565,6 +2731,10 @@ function gatherDealFormData(deal) {
     deal.title = document.getElementById('deal-title-input').value.trim();
     deal.date = document.getElementById('deal-date-input').value;
     deal.status = document.getElementById('deal-status-select').value;
+    var fnInput = document.getElementById('deal-filename-input');
+    if (fnInput) {
+        deal.filename = fnInput.value.trim();
+    }
     deal.currency = document.getElementById('deal-currency-input').value.trim().toUpperCase();
     deal.additional_costs = parseFloat(document.getElementById('deal-extra-costs').value) || 0;
     deal.additional_costs_currency = document.getElementById('deal-extra-currency').value.trim().toUpperCase();
@@ -2585,6 +2755,117 @@ function gatherDealFormData(deal) {
         };
         if (item.product) deal.order.push(item);
     });
+}
+
+
+// ========== PRODUCT PICKER FOR DEALS ==========
+
+var _productPickerDeal = null;
+var _productPickerDir = null;
+
+function showProductPickerForDeal(dir, deal) {
+    _productPickerDeal = deal;
+    _productPickerDir = dir;
+
+    // Build a modal overlay with product listing
+    var s = app.getState();
+    var files = s.files || [];
+
+    var overlay = document.getElementById('product-picker-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'product-picker-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:center;justify-content:center';
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeProductPicker();
+        });
+    }
+
+    var html = '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);width:600px;max-height:80vh;display:flex;flex-direction:column">';
+    html += '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">';
+    html += '<strong>📂 Select Products to Add to Deal</strong>';
+    html += '<button class="btn btn-sm" id="picker-close-btn">✕</button>';
+    html += '</div>';
+    html += '<div style="padding:8px 16px"><input type="text" id="picker-filter" placeholder="Filter products..." style="width:100%;padding:6px 8px" /></div>';
+    html += '<div id="picker-list" style="overflow-y:auto;flex:1;padding:8px 16px">';
+
+    if (files.length === 0) {
+        html += '<div class="empty-tab">No .prod files in the current directory.</div>';
+    } else {
+        files.forEach(function(file, idx) {
+            var displayName = file.split('/').pop().replace(/\.prod$/, '');
+            var checked = '';
+            // Check if already in deal
+            if (deal.order && deal.order.some(function(o) { return o.product === file; })) {
+                checked = ' checked';
+            }
+            html += '<label style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer">';
+            html += '<input type="checkbox" class="picker-item-cb" value="' + escapeHtml(file) + '" ' + checked + ' style="margin-right:10px" />';
+            html += '<span>' + escapeHtml(displayName) + '</span>';
+            html += '<span style="margin-left:auto;font-size:11px;color:var(--text-muted)">' + escapeHtml(file) + '</span>';
+            html += '</label>';
+        });
+    }
+
+    html += '</div>';
+    html += '<div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">';
+    html += '<button class="btn" id="picker-cancel-btn">Cancel</button>';
+    html += '<button class="btn btn-primary" id="picker-add-to-deal-btn">➕ Add Selected to Deal</button>';
+    html += '</div>';
+    html += '</div>';
+
+    overlay.innerHTML = html;
+    overlay.style.display = 'flex';
+
+    // Filter
+    var filterInput = document.getElementById('picker-filter');
+    if (filterInput) {
+        filterInput.addEventListener('input', function() {
+            var q = this.value.toLowerCase();
+            document.querySelectorAll('#picker-list label').forEach(function(label) {
+                label.style.display = label.textContent.toLowerCase().indexOf(q) >= 0 ? 'flex' : 'none';
+            });
+        });
+    }
+
+    document.getElementById('picker-close-btn').addEventListener('click', closeProductPicker);
+    document.getElementById('picker-cancel-btn').addEventListener('click', closeProductPicker);
+    document.getElementById('picker-add-to-deal-btn').addEventListener('click', function() {
+        var cbs = document.querySelectorAll('.picker-item-cb:checked');
+        if (cbs.length === 0) { closeProductPicker(); return; }
+
+        // Get deal currency for defaults
+        var dealCurrency = document.getElementById('deal-currency-input');
+        var defaultCur = dealCurrency ? dealCurrency.value.trim().toUpperCase() : 'USD';
+
+        cbs.forEach(function(cb) {
+            var filePath = cb.value;
+            // Check if already exists — skip if so
+            if (deal.order.some(function(o) { return o.product === filePath; })) return;
+            var displayName = filePath.split('/').pop().replace(/\.prod$/, '');
+            deal.order.push({
+                product: filePath,
+                product_title: displayName,
+                quantity: 1,
+                unit_price: 0,
+                currency: defaultCur,
+                total: 0,
+                notes: ''
+            });
+        });
+
+        closeProductPicker();
+        renderDealOrderEditor(document.getElementById('tab-content'));
+    });
+}
+
+
+function closeProductPicker() {
+    var overlay = document.getElementById('product-picker-overlay');
+    if (overlay) overlay.style.display = 'none';
+    _productPickerDeal = null;
+    _productPickerDir = null;
 }
 
 
