@@ -474,6 +474,63 @@ def api_delete_contact():
         return json_err(str(e))
 
 
+# Deals CRUD -------------------------------------------------------------
+@bottle_app.post("/api/deals/list")
+def api_list_deals():
+    """List all deals in a company directory's Deals subdirectory."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    if not directory:
+        return json_err("dir is required")
+    try:
+        return json_ok(store.list_deals(directory))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/deals/get")
+def api_get_deal():
+    """Get a single deal by filename."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    filename = body.get("filename", "")
+    if not directory or not filename:
+        return json_err("dir and filename are required")
+    try:
+        return json_ok(store.get_deal(directory, filename))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/deals/save")
+def api_save_deal():
+    """Create or update a deal."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    deal_data = body.get("deal", {})
+    if not directory:
+        return json_err("dir is required")
+    try:
+        return json_ok(store.save_deal(directory, deal_data))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/deals/delete")
+def api_delete_deal():
+    """Delete a deal by filename."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    filename = body.get("filename", "")
+    if not directory or not filename:
+        return json_err("dir and filename are required")
+    try:
+        store.delete_deal(directory, filename)
+        return json_ok(None)
+    except Exception as e:
+        return json_err(str(e))
+
+
 # ---------------------------------------------------------------------------
 # PyWebView entry point
 # ---------------------------------------------------------------------------

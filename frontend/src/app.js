@@ -109,6 +109,10 @@ const api = {
     addContact:            (d, contact) => apiCall('POST', '/api/company/contact/add', { dir: d, contact }),
     updateContact:         (d, index, contact) => apiCall('POST', '/api/company/contact/update', { dir: d, contact, index }),
     deleteContact:         (d, index) => apiCall('POST', '/api/company/contact/delete', { dir: d, index }),
+    listDeals:             (d) => apiCall('POST', '/api/deals/list', { dir: d }),
+    getDeal:               (d, f) => apiCall('POST', '/api/deals/get', { dir: d, filename: f }),
+    saveDeal:              (d, deal) => apiCall('POST', '/api/deals/save', { dir: d, deal }),
+    deleteDeal:            (d, f) => apiCall('POST', '/api/deals/delete', { dir: d, filename: f }),
     pickDirectory:        () => callDialogApi('pickDirectory'),
     pickPhotos:           () => callDialogApi('pickPhotos'),
 };

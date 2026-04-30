@@ -196,3 +196,65 @@ def save_settings(settings: dict) -> None:
     import json
     with open(cfg_path, "w") as f:
         json.dump(settings, f)
+
+
+# ============== DEALS ==============
+
+def get_deals_dir(company_dir: str) -> str:
+    """Return the Deals subdirectory path for a given company directory."""
+    return os.path.join(company_dir, "Deals")
+
+
+def list_deals(company_dir: str) -> list[dict]:
+    """List all deals in the Deals/ subdirectory."""
+    from .deal import list_deals as _list_deals
+    deals_dir = get_deals_dir(company_dir)
+    return _list_deals(deals_dir)
+
+
+def get_deal(company_dir: str, filename: str) -> dict:
+    """Get a single deal by filename."""
+    from .deal import Deal
+    deals_dir = get_deals_dir(company_dir)
+    filepath = os.path.join(deals_dir, filename)
+    d = Deal.load(filepath)
+    return d.to_dict()
+
+
+def save_deal(company_dir: str, deal_data: dict) -> dict:
+    """Save a deal. Creates or updates."""
+    from .deal import Deal, OrderItem, WarehouseRecord, WarehouseItem
+    deals_dir = get_deals_dir(company_dir)
+    os.makedirs(deals_dir, exist_ok=True)
+
+    d = Deal(deals_dir)
+    d.filename = deal_data.get("filename", "")
+    d.title = deal_data.get("title", "")
+    d.date = deal_data.get("date", "")
+    d.status = deal_data.get("status", "pending")
+    d.additional_costs = float(deal_data.get("additional_costs", 0))
+    d.additional_costs_currency = deal_data.get("additional_costs_currency", "")
+    d.notes = deal_data.get("notes", "")
+    d.currency = deal_data.get("currency", "USD")
+
+    for o in deal_data.get("order", []):
+        item = OrderItem.from_dict(o)
+        d.order.append(item)
+
+    for w in deal_data.get("warehouse", []):
+        rec = WarehouseRecord.from_dict(w)
+        d.warehouse.append(rec)
+
+    if not d.filename:
+        d.filename = d.generate_filename()
+
+    d.save()
+    return d.to_dict()
+
+
+def delete_deal(company_dir: str, filename: str) -> None:
+    """Delete a .deal file."""
+    deals_dir = get_deals_dir(company_dir)
+    filepath = os.path.join(deals_dir, filename)
+    if os.path.isfile(filepath):
+        os.remove(filepath)

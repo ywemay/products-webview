@@ -2049,7 +2049,27 @@ function renderCompanyEditor(container) {
         return;
     }
 
-    var html = '<div class="company-editor">';
+    var tab = companyEditorState._tab || 'info';
+    var dir = companyEditorState.directory;
+
+    // Company tab bar
+    var html = '<div class="company-editor-tabs" style="display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:4px">';
+    html += '<button class="tab-btn ' + (tab === 'info' ? 'active' : '') + '" data-company-tab="info">🏢 Info</button>';
+    html += '<button class="tab-btn ' + (tab === 'deals' ? 'active' : '') + '" data-company-tab="deals">📋 Deals</button>';
+    html += '<button class="tab-btn ' + (tab === 'warehouse' ? 'active' : '') + '" data-company-tab="warehouse">📦 Warehouse</button>';
+    html += '</div>';
+
+    if (tab === 'deals') {
+        renderDealsList(container);
+        return;
+    }
+    if (tab === 'warehouse') {
+        renderWarehouseTab(container);
+        return;
+    }
+
+    // ==== INFO TAB ====
+    html += '<div class="company-editor">';
     
     // Company info
     html += '<div class="section-header">🏢 Company Information</div>';
@@ -2159,8 +2179,10 @@ function renderCompanyEditor(container) {
     if (addEmailBtn) addEmailBtn.addEventListener('click', handleCompanyAddEmail);
     var addPhoneBtn = document.querySelector('[data-action="company-add-phone"]');
     if (addPhoneBtn) addPhoneBtn.addEventListener('click', handleCompanyAddPhone);
+    wireCompanyTabs();
 }
 
+var _dealEditorState = null; // { deal: {}, isNew: bool }
 var _editingContactIdx = -1;
 
 function showContactForm(idx) {
@@ -2281,6 +2303,514 @@ function handleCompanyAddPhone() {
     list.appendChild(row);
     row.querySelector('input').focus();
 }
+
+// ========== COMPANY TAB SWITCHING ==========
+
+function wireCompanyTabs() {
+    var tabs = document.querySelectorAll('[data-company-tab]');
+    tabs.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            companyEditorState._tab = btn.dataset.companyTab;
+            renderCompanyEditor(document.getElementById('tab-content'));
+        });
+    });
+}
+
+// ========== DEALS TAB ==========
+
+async function renderDealsList(container) {
+    var dir = companyEditorState.directory;
+    html = '<div class="company-editor">';
+    html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span>📋 Deals</span>';
+    html += '<button class="btn btn-sm btn-primary" data-action="new-deal">➕ New Deal</button>';
+    html += '</div>';
+    html += '<div id="deals-list">Loading...</div>';
+    html += '</div>';
+    container.innerHTML = html;
+
+    try {
+        var deals = await api.listDeals(dir);
+        var listEl = document.getElementById('deals-list');
+        if (!deals || deals.length === 0) {
+            listEl.innerHTML = '<div class="empty-tab" style="padding:16px">No deals yet. Click "New Deal" to create one.</div>';
+        } else {
+            var dh = '';
+            deals.forEach(function(d) {
+                var statusColor = 'var(--text-muted)';
+                var statusEmoji = '⏳';
+                if (d.status === 'confirmed') { statusColor = 'var(--accent-green)'; statusEmoji = '✅'; }
+                else if (d.status === 'shipped') { statusColor = 'var(--accent-orange)'; statusEmoji = '🚚'; }
+                else if (d.status === 'completed') { statusColor = 'var(--accent-green)'; statusEmoji = '🎉'; }
+                else if (d.status === 'cancelled') { statusColor = 'var(--accent-red)'; statusEmoji = '🚫'; }
+                dh += '<div class="deal-card" data-deal-file="' + escapeHtml(d.filename) + '" style="padding:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer">';
+                dh += '<div style="display:flex;justify-content:space-between;align-items:center">';
+                dh += '<div><strong>' + escapeHtml(d.title || d.filename) + '</strong>';
+                if (d.date) dh += ' <span style="font-size:12px;color:var(--text-muted)">(' + escapeHtml(d.date) + ')</span>';
+                dh += '</div>';
+                dh += '<span style="color:' + statusColor + ';font-size:12px;font-weight:600">' + statusEmoji + ' ' + escapeHtml(d.status) + '</span>';
+                dh += '</div>';
+                dh += '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">';
+                if (d.order_count) dh += '📦 ' + d.order_count + ' item(s) ';
+                if (d.warehouse_records) dh += '📥 ' + d.warehouse_records + ' warehouse record(s)';
+                dh += '</div>';
+                dh += '</div>';
+            });
+            listEl.innerHTML = dh;
+            // Click to edit
+            listEl.querySelectorAll('.deal-card').forEach(function(card) {
+                card.addEventListener('click', function() {
+                    openDealEditor(card.dataset.dealFile);
+                });
+            });
+        }
+    } catch (err) {
+        document.getElementById('deals-list').innerHTML = '<div class="error-state">Error: ' + escapeHtml(err.message) + '</div>';
+    }
+
+    // Wire new deal button
+    var newBtn = container.querySelector('[data-action="new-deal"]');
+    if (newBtn) newBtn.addEventListener('click', function() { openDealEditor(null); });
+}
+
+
+// ========== DEAL EDITOR ==========
+
+function renderDealEditor(container) {
+    // Decide: are we adding order items (tab='deals') or warehouse (tab='warehouse')?
+    var tab = companyEditorState._tab || 'deals';
+    if (tab === 'deals') {
+        renderDealOrderEditor(container);
+    } else {
+        renderDealWarehouseEditor(container);
+    }
+}
+
+async function openDealEditor(filename) {
+    var dir = companyEditorState.directory;
+    var isNew = !filename;
+    var deal;
+    if (isNew) {
+        deal = {
+            title: '', date: new Date().toISOString().slice(0, 10),
+            status: 'pending', additional_costs: 0, additional_costs_currency: '',
+            notes: '', currency: 'USD', order: [], warehouse: [],
+            filename: ''
+        };
+    } else {
+        try {
+            deal = await api.getDeal(dir, filename);
+        } catch (err) {
+            alert('Failed to load deal: ' + err.message);
+            return;
+        }
+    }
+    _dealEditorState = { deal: deal, isNew: isNew };
+    companyEditorState._tab = isNew ? 'deals' : 'deals';
+    renderDealOrderEditor(document.getElementById('tab-content'));
+}
+
+
+function renderDealOrderEditor(container) {
+    var deal = _dealEditorState ? _dealEditorState.deal : null;
+    if (!deal) { container.innerHTML = '<div class="empty-tab">Deal not loaded.</div>'; return; }
+
+    var dir = companyEditorState.directory;
+
+    var html = '<div class="company-editor">';
+    // Back button + title
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<div><button class="btn btn-sm" data-action="back-to-deals-list">← Back to Deals</button>';
+    html += ' <strong>' + escapeHtml(deal.title || 'New Deal') + '</strong></div>';
+    if (!_dealEditorState.isNew) {
+        html += '<button class="btn btn-xs btn-danger" data-action="delete-deal">🗑 Delete</button>';
+    }
+    html += '</div>';
+
+    // Deal metadata
+    html += '<div class="form-row">';
+    html += '<div class="form-group" style="flex:2"><label>Title</label><input type="text" id="deal-title-input" value="' + escapeHtml(deal.title) + '" /></div>';
+    html += '<div class="form-group" style="flex:1"><label>Date</label><input type="date" id="deal-date-input" value="' + escapeHtml(deal.date || '') + '" /></div>';
+    html += '<div class="form-group" style="flex:1"><label>Status</label>';
+    html += '<select id="deal-status-select" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-input);color:var(--text-primary);font-size:13px">';
+    ['pending','confirmed','shipped','completed','cancelled'].forEach(function(s) {
+        html += '<option value="' + s + '"' + (deal.status === s ? ' selected' : '') + '>' + s.charAt(0).toUpperCase() + s.slice(1) + '</option>';
+    });
+    html += '</select></div>';
+    html += '</div>';
+
+    html += '<div class="form-row">';
+    html += '<div class="form-group" style="flex:1"><label>Default Currency</label><input type="text" id="deal-currency-input" value="' + escapeHtml(deal.currency || 'USD') + '" maxlength="3" /></div>';
+    html += '<div class="form-group" style="flex:1"><label>Additional Costs</label><input type="number" step="0.01" id="deal-extra-costs" value="' + (deal.additional_costs || 0) + '" /></div>';
+    html += '<div class="form-group" style="flex:1"><label>Costs Currency</label><input type="text" id="deal-extra-currency" value="' + escapeHtml(deal.additional_costs_currency || '') + '" maxlength="3" /></div>';
+    html += '</div>';
+
+    html += '<div class="form-group"><label>Notes</label><textarea id="deal-notes-input" rows="2" style="width:100%;padding:6px;resize:vertical">' + escapeHtml(deal.notes || '') + '</textarea></div>';
+
+    html += '<div style="margin:12px 0;border-top:1px solid var(--border);padding-top:12px">';
+
+    // Order items section
+    html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span>📦 Order Items</span>';
+    html += '<button class="btn btn-sm btn-primary" data-action="add-order-item">➕ Add Item</button>';
+    html += '</div>';
+
+    var order = deal.order || [];
+    if (order.length === 0) {
+        html += '<div class="empty-tab" style="padding:8px;font-size:13px">No items in this order yet.</div>';
+    } else {
+        html += '<div style="overflow-x:auto">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">';
+        html += '<thead><tr style="background:var(--bg-hover);text-align:left">';
+        html += '<th style="padding:6px">Product</th><th style="padding:6px">Qty</th><th style="padding:6px">Unit Price</th><th style="padding:6px">Currency</th><th style="padding:6px">Total</th><th style="padding:6px">Notes</th><th style="padding:6px"></th>';
+        html += '</tr></thead><tbody>';
+        order.forEach(function(item, idx) {
+            html += '<tr data-order-idx="' + idx + '">';
+            html += '<td style="padding:4px"><input type="text" class="deal-order-product" value="' + escapeHtml(item.product || '') + '" placeholder="path/to/prod" style="width:140px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" class="deal-order-qty" value="' + (item.quantity || 0) + '" style="width:60px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-price" value="' + (item.unit_price || 0) + '" style="width:80px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="text" class="deal-order-currency" value="' + escapeHtml(item.currency || '') + '" maxlength="3" style="width:50px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="number" step="0.01" class="deal-order-total" value="' + (item.total || 0) + '" style="width:90px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><input type="text" class="deal-order-notes" value="' + escapeHtml(item.notes || '') + '" style="width:100px;padding:3px 6px;font-size:12px" /></td>';
+            html += '<td style="padding:4px"><button class="btn btn-xs btn-danger" data-action="remove-order-item" data-idx="' + idx + '">✕</button></td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // Save button
+    html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">';
+    html += '<button class="btn btn-primary" id="deal-save-btn">💾 Save Deal</button>';
+    html += ' <span id="deal-save-status" style="font-size:12px;color:var(--text-muted);margin-left:8px"></span>';
+    html += '</div>';
+
+    html += '</div>'; // company-editor close
+    container.innerHTML = html;
+
+    wireDealOrderEditor(dir);
+}
+
+
+function wireDealOrderEditor(dir) {
+    var deal = _dealEditorState.deal;
+
+    // Back button
+    var backBtn = document.querySelector('[data-action="back-to-deals-list"]');
+    if (backBtn) backBtn.addEventListener('click', function() {
+        companyEditorState._tab = 'deals';
+        _dealEditorState = null;
+        renderCompanyEditor(document.getElementById('tab-content'));
+    });
+
+    // Delete button
+    var delBtn = document.querySelector('[data-action="delete-deal"]');
+    if (delBtn) delBtn.addEventListener('click', async function() {
+        if (!confirm('Delete this deal?')) return;
+        try {
+            await api.deleteDeal(dir, deal.filename);
+            companyEditorState._tab = 'deals';
+            _dealEditorState = null;
+            renderCompanyEditor(document.getElementById('tab-content'));
+        } catch (err) {
+            alert('Delete failed: ' + err.message);
+        }
+    });
+
+    // Add order item
+    var addBtn = document.querySelector('[data-action="add-order-item"]');
+    if (addBtn) addBtn.addEventListener('click', function() {
+        deal.order.push({
+            product: '', product_title: '',
+            quantity: 0, unit_price: 0, currency: '',
+            total: 0, notes: ''
+        });
+        renderDealOrderEditor(document.getElementById('tab-content'));
+    });
+
+    // Remove order items (delegated)
+    var container = document.getElementById('tab-content');
+    container.querySelectorAll('[data-action="remove-order-item"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var idx = parseInt(btn.dataset.idx);
+            deal.order.splice(idx, 1);
+            renderDealOrderEditor(document.getElementById('tab-content'));
+        });
+    });
+
+    // Save button
+    document.getElementById('deal-save-btn').addEventListener('click', async function() {
+        gatherDealFormData(deal);
+        var statusEl = document.getElementById('deal-save-status');
+        statusEl.textContent = 'Saving...';
+        try {
+            // Generate filename if new
+            if (_dealEditorState.isNew && !deal.filename) {
+                deal.filename = generateDealFilename(deal);
+            }
+            var result = await api.saveDeal(dir, deal);
+            _dealEditorState.isNew = false;
+            statusEl.textContent = '✅ Saved at ' + new Date().toLocaleTimeString();
+            // Update the deal state with saved version
+            _dealEditorState.deal = result;
+        } catch (err) {
+            statusEl.textContent = '❌ Error: ' + err.message;
+        }
+    });
+}
+
+
+function gatherDealFormData(deal) {
+    deal.title = document.getElementById('deal-title-input').value.trim();
+    deal.date = document.getElementById('deal-date-input').value;
+    deal.status = document.getElementById('deal-status-select').value;
+    deal.currency = document.getElementById('deal-currency-input').value.trim().toUpperCase();
+    deal.additional_costs = parseFloat(document.getElementById('deal-extra-costs').value) || 0;
+    deal.additional_costs_currency = document.getElementById('deal-extra-currency').value.trim().toUpperCase();
+    deal.notes = document.getElementById('deal-notes-input').value.trim();
+
+    // Gather order items from table
+    deal.order = [];
+    var rows = document.querySelectorAll('#tab-content tbody tr');
+    rows.forEach(function(row) {
+        var item = {
+            product: (row.querySelector('.deal-order-product') || {}).value || '',
+            product_title: '',
+            quantity: parseInt((row.querySelector('.deal-order-qty') || {}).value) || 0,
+            unit_price: parseFloat((row.querySelector('.deal-order-price') || {}).value) || 0,
+            currency: (row.querySelector('.deal-order-currency') || {}).value || '',
+            total: parseFloat((row.querySelector('.deal-order-total') || {}).value) || 0,
+            notes: (row.querySelector('.deal-order-notes') || {}).value || ''
+        };
+        if (item.product) deal.order.push(item);
+    });
+}
+
+
+function generateDealFilename(deal) {
+    var d = deal.date || new Date().toISOString().slice(0, 10);
+    var safe = (deal.title || 'untitled').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
+    return d + '-' + (safe || 'untitled') + '.deal';
+}
+
+
+// ========== WAREHOUSE TAB ==========
+
+async function renderWarehouseTab(container) {
+    var dir = companyEditorState.directory;
+    var html = '<div class="company-editor">';
+    html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span>📦 Warehouse</span>';
+    html += '<button class="btn btn-sm btn-primary" data-action="new-warehouse-entry">➕ New Receipt</button>';
+    html += '</div>';
+    html += '<div id="warehouse-list">Loading...</div>';
+    html += '</div>';
+    container.innerHTML = html;
+
+    try {
+        var deals = await api.listDeals(dir);
+        var listEl = document.getElementById('warehouse-list');
+        // Collect all warehouse records from all deals
+        var allRecords = [];
+        if (deals) {
+            deals.forEach(function(d) {
+                if (d.warehouse_records > 0) {
+                    allRecords.push({ deal: d });
+                }
+            });
+        }
+        if (allRecords.length === 0) {
+            listEl.innerHTML = '<div class="empty-tab" style="padding:16px">No warehouse records yet. Create a deal with warehouse entries.</div>';
+        } else {
+            var wh = '';
+            for (var i = 0; i < allRecords.length; i++) {
+                var d = allRecords[i].deal;
+                try {
+                    var full = await api.getDeal(dir, d.filename);
+                    if (full.warehouse && full.warehouse.length > 0) {
+                        full.warehouse.forEach(function(wr) {
+                            wh += '<div class="deal-card" style="padding:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px">';
+                            wh += '<div style="display:flex;justify-content:space-between">';
+                            wh += '<div><strong>' + escapeHtml(full.title || full.filename) + '</strong>';
+                            if (wr.date) wh += ' <span style="font-size:12px;color:var(--text-muted)">receipt ' + escapeHtml(wr.date) + '</span>';
+                            wh += '</div>';
+                            wh += '<button class="btn btn-xs" data-action="open-deal-warehouse" data-deal-file="' + escapeHtml(d.filename) + '">✏️ Edit</button>';
+                            wh += '</div>';
+                            if (wr.items && wr.items.length > 0) {
+                                wh += '<div style="font-size:12px;color:var(--text-muted);margin-top:6px">';
+                                wr.items.forEach(function(wi) {
+                                    wh += '📦 ' + escapeHtml(wi.product_title || wi.product) + ' × ' + wi.quantity + '<br>';
+                                });
+                                wh += '</div>';
+                            }
+                            wh += '</div>';
+                        });
+                    }
+                } catch (err) {}
+            }
+            listEl.innerHTML = wh || '<div class="empty-tab">No warehouse records with items.</div>';
+            // Wire edit buttons
+            listEl.querySelectorAll('[data-action="open-deal-warehouse"]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    companyEditorState._tab = 'warehouse';
+                    openDealEditor(btn.dataset.dealFile);
+                });
+            });
+        }
+    } catch (err) {
+        document.getElementById('warehouse-list').innerHTML = '<div class="error-state">Error: ' + escapeHtml(err.message) + '</div>';
+    }
+
+    var newBtn = container.querySelector('[data-action="new-warehouse-entry"]');
+    if (newBtn) newBtn.addEventListener('click', function() {
+        companyEditorState._tab = 'deals';
+        openDealEditor(null);
+    });
+}
+
+
+function renderDealWarehouseEditor(container) {
+    var deal = _dealEditorState ? _dealEditorState.deal : null;
+    if (!deal) { container.innerHTML = '<div class="empty-tab">Deal not loaded.</div>'; return; }
+
+    var dir = companyEditorState.directory;
+
+    var html = '<div class="company-editor">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
+    html += '<div><button class="btn btn-sm" data-action="back-to-warehouse-list">← Back to Warehouse</button>';
+    html += ' <strong>📦 ' + escapeHtml(deal.title || deal.filename) + '</strong></div>';
+    html += '</div>';
+
+    // Warehouse records
+    html += '<div class="section-header" style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span>Receipt Records</span>';
+    html += '<button class="btn btn-sm btn-primary" data-action="add-warehouse-record">➕ Add Receipt</button>';
+    html += '</div>';
+
+    var warehouse = deal.warehouse || [];
+    if (warehouse.length === 0) {
+        html += '<div class="empty-tab" style="padding:8px;font-size:13px">No warehouse receipts yet.</div>';
+    } else {
+        warehouse.forEach(function(wr, wrIdx) {
+            html += '<div class="warehouse-record" data-wr-idx="' + wrIdx + '" style="margin-top:8px;padding:10px;background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius)">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+            html += '<label>Receipt Date: <input type="date" class="wr-date" value="' + escapeHtml(wr.date || '') + '" style="font-size:12px" /></label>';
+            html += '<button class="btn btn-xs btn-danger" data-action="remove-warehouse-record" data-idx="' + wrIdx + '">✕ Remove</button>';
+            html += '</div>';
+            html += '<div style="margin-top:8px">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+            html += '<thead><tr style="background:var(--bg-surface);text-align:left">';
+            html += '<th style="padding:4px">Product</th><th style="padding:4px">Qty</th><th style="padding:4px"></th>';
+            html += '</tr></thead><tbody>';
+            var items = wr.items || [];
+            items.forEach(function(item, itemIdx) {
+                html += '<tr>';
+                html += '<td style="padding:2px"><input type="text" class="wr-product" value="' + escapeHtml(item.product || '') + '" placeholder="path/to/prod" style="width:180px;padding:2px 4px;font-size:12px" /></td>';
+                html += '<td style="padding:2px"><input type="number" class="wr-qty" value="' + (item.quantity || 0) + '" style="width:60px;padding:2px 4px;font-size:12px" /></td>';
+                html += '<td style="padding:2px"><button class="btn btn-xs btn-danger" data-action="remove-warehouse-item" data-wr="' + wrIdx + '" data-idx="' + itemIdx + '">✕</button></td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            html += '<button class="btn btn-xs" data-action="add-warehouse-item" data-idx="' + wrIdx + '" style="margin-top:4px">➕ Add Item</button>';
+            html += '</div></div>';
+        });
+    }
+
+    html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">';
+    html += '<button class="btn btn-primary" id="deal-wh-save-btn">💾 Save Deal</button>';
+    html += ' <span id="deal-wh-status" style="font-size:12px;color:var(--text-muted);margin-left:8px"></span>';
+    html += '</div>';
+    html += '</div>';
+    container.innerHTML = html;
+
+    wireDealWarehouseEditor(dir);
+}
+
+
+function wireDealWarehouseEditor(dir) {
+    var deal = _dealEditorState.deal;
+
+    var backBtn = document.querySelector('[data-action="back-to-warehouse-list"]');
+    if (backBtn) backBtn.addEventListener('click', function() {
+        companyEditorState._tab = 'warehouse';
+        _dealEditorState = null;
+        renderCompanyEditor(document.getElementById('tab-content'));
+    });
+
+    var addRecBtn = document.querySelector('[data-action="add-warehouse-record"]');
+    if (addRecBtn) addRecBtn.addEventListener('click', function() {
+        deal.warehouse.push({ date: '', items: [] });
+        renderDealWarehouseEditor(document.getElementById('tab-content'));
+    });
+
+    var container = document.getElementById('tab-content');
+    container.querySelectorAll('[data-action="remove-warehouse-record"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var idx = parseInt(btn.dataset.idx);
+            deal.warehouse.splice(idx, 1);
+            renderDealWarehouseEditor(document.getElementById('tab-content'));
+        });
+    });
+
+    container.querySelectorAll('[data-action="remove-warehouse-item"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var wrIdx = parseInt(btn.dataset.wr);
+            var idx = parseInt(btn.dataset.idx);
+            if (deal.warehouse[wrIdx]) {
+                deal.warehouse[wrIdx].items.splice(idx, 1);
+                renderDealWarehouseEditor(document.getElementById('tab-content'));
+            }
+        });
+    });
+
+    container.querySelectorAll('[data-action="add-warehouse-item"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var wrIdx = parseInt(btn.dataset.idx);
+            if (deal.warehouse[wrIdx]) {
+                deal.warehouse[wrIdx].items.push({ product: '', product_title: '', quantity: 0 });
+                renderDealWarehouseEditor(document.getElementById('tab-content'));
+            }
+        });
+    });
+
+    document.getElementById('deal-wh-save-btn').addEventListener('click', async function() {
+        gatherWarehouseFormData(deal);
+        var statusEl = document.getElementById('deal-wh-status');
+        statusEl.textContent = 'Saving...';
+        try {
+            if (_dealEditorState.isNew && !deal.filename) {
+                deal.filename = generateDealFilename(deal);
+            }
+            var result = await api.saveDeal(dir, deal);
+            _dealEditorState.isNew = false;
+            _dealEditorState.deal = result;
+            statusEl.textContent = '✅ Saved at ' + new Date().toLocaleTimeString();
+        } catch (err) {
+            statusEl.textContent = '❌ Error: ' + err.message;
+        }
+    });
+}
+
+
+function gatherWarehouseFormData(deal) {
+    var container = document.getElementById('tab-content');
+    deal.warehouse = [];
+    container.querySelectorAll('.warehouse-record').forEach(function(rec) {
+        var wr = { date: '', items: [] };
+        wr.date = (rec.querySelector('.wr-date') || {}).value || '';
+        var rows = rec.querySelectorAll('tbody tr');
+        rows.forEach(function(row) {
+            var product = (row.querySelector('.wr-product') || {}).value || '';
+            var qty = parseInt((row.querySelector('.wr-qty') || {}).value) || 0;
+            if (product) {
+                wr.items.push({ product: product, product_title: '', quantity: qty });
+            }
+        });
+        if (wr.items.length > 0) deal.warehouse.push(wr);
+    });
+}
+
 
 async function handleOpenCompanyEditor(subdirPath) {
     app.setState({ loading: true, error: '' });
