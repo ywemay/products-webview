@@ -21,6 +21,13 @@ def _generate_code(uuid_str: str) -> str:
     return "PROD-" + uuid_str[:8]
 
 
+def _normalize_timestamp(ts: int) -> int:
+    """Normalize a timestamp that might be in milliseconds to seconds."""
+    if ts > 10**11:  # millisecond timestamp
+        return ts // 1000
+    return ts
+
+
 @dataclass
 class Header:
     version: int = 2
@@ -68,7 +75,7 @@ class Product:
 
             hdr_len = struct.unpack("<I", f.read(4))[0]
             hdr_buf = f.read(hdr_len)
-            raw = json.loads(hdr_buf)
+            raw = json.loads(hdr_buf.decode("utf-8", errors="replace"))
             hdr = Header(
                 version=raw.get("version", 2),
                 title=raw.get("title", ""),
@@ -82,7 +89,7 @@ class Product:
             # Price history block
             rec_count = struct.unpack("<I", f.read(4))[0]
             for _ in range(rec_count):
-                ts = struct.unpack("<q", f.read(8))[0]
+                ts = _normalize_timestamp(struct.unpack("<q", f.read(8))[0])
                 vi = struct.unpack("<i", f.read(4))[0]
                 ph = struct.unpack("<q", f.read(8))[0]
                 curr = f.read(3).decode("ascii")
@@ -116,7 +123,9 @@ class Product:
                 # Price history
                 f.write(struct.pack("<I", len(self.price_history)))
                 for rec in self.price_history:
-                    f.write(struct.pack("<q", rec.timestamp))
+                    # Normalize timestamp on save too
+                    ts = _normalize_timestamp(rec.timestamp)
+                    f.write(struct.pack("<q", ts))
                     f.write(struct.pack("<i", rec.variation_index))
                     f.write(struct.pack("<q", rec.price_hundredths))
                     if len(rec.currency) != 3:

@@ -100,6 +100,13 @@ async function loadSettings() {
     }
 }
 
+// ========== COMPANY EDITOR STATE ==========
+
+var companyEditorState = {
+    directory: '',
+    company: null
+};
+
 // ========== RENDER ==========
 
 function render() {
@@ -216,11 +223,25 @@ function renderSidebar() {
     // Subdirectories section
     if (s.subdirs && s.subdirs.length > 0) {
         html += '<div class="sidebar-section-title">Folders</div>';
-        s.subdirs.forEach(function(sub) {
+        s.subdirs.forEach(function(item) {
+            var sub = item.name ? item.name : item;
+            var companyInfo = item.company || null;
+            
             html += '<div class="file-item folder-item" data-subdir="' + escapeHtml(sub) + '" title="' + escapeHtml(s.currentDir + '/' + sub) + '">' +
                 '<span class="icon">📁</span>' +
-                '<span class="name">' + escapeHtml(sub) + '</span>' +
-                '</div>';
+                '<div class="folder-info">' +
+                '<span class="name">' + escapeHtml(sub) + '</span>';
+            
+            if (companyInfo && companyInfo.name) {
+                var addrTrunc = companyInfo.address ? (companyInfo.address.length > 30 ? companyInfo.address.substring(0, 30) + '…' : companyInfo.address) : '';
+                html += '<span class="company-meta">' +
+                    escapeHtml(companyInfo.name) +
+                    (addrTrunc ? ', ' + escapeHtml(addrTrunc) : '') +
+                    (companyInfo.contactCount > 0 ? ' · ' + companyInfo.contactCount + ' contacts' : '') +
+                    '</span>';
+            }
+            
+            html += '</div></div>';
         });
     }
 
@@ -284,6 +305,15 @@ function renderContent() {
         renderDetailHeader();
         renderTabs();
         renderEditorTabContent();
+    } else if (companyEditorState.directory && companyEditorState.company) {
+        // Company editor mode
+        emptyState.style.display = 'none';
+        galleryView.style.display = 'none';
+        detailHeader.style.display = 'none';
+        tabs.style.display = 'none';
+        tabContent.style.display = 'block';
+        editorNav.style.display = 'flex';
+        renderCompanyEditor(tabContent);
     } else {
         // Gallery mode (directory open, no product selected)
         emptyState.style.display = 'none';
@@ -966,6 +996,40 @@ function bindEvents() {
                 var delFile = btn.dataset.file;
                 if (delFile) handleDeleteFile(delFile);
                 break;
+            case 'company-remove-email':
+                var emailIdx = parseInt(btn.dataset.idx);
+                if (!isNaN(emailIdx)) {
+                    var el = document.querySelector('.company-email-input[data-idx="' + emailIdx + '"]');
+                    if (el) el.parentElement.remove();
+                }
+                break;
+            case 'company-remove-phone':
+                var phoneIdx = parseInt(btn.dataset.idx);
+                if (!isNaN(phoneIdx)) {
+                    var el = document.querySelector('.company-phone-input[data-idx="' + phoneIdx + '"]');
+                    if (el) el.parentElement.remove();
+                }
+                break;
+            case 'company-edit-contact':
+                var contactIdx = parseInt(btn.dataset.idx);
+                if (!isNaN(contactIdx)) showContactForm(contactIdx);
+                break;
+            case 'company-delete-contact':
+                (async function() {
+                    var cIdx = parseInt(btn.dataset.idx);
+                    if (isNaN(cIdx)) return;
+                    var confirmed = await _showConfirmDialog('Delete this contact?');
+                    if (!confirmed) return;
+                    try {
+                        var result = await api.deleteContact(companyEditorState.directory, cIdx);
+                        companyEditorState.company = result;
+                        renderCompanyEditor(document.getElementById('tab-content'));
+                        app.setState({ success: 'Contact deleted.' });
+                    } catch (err) {
+                        app.setState({ error: 'Failed to delete contact: ' + err.message });
+                    }
+                })();
+                break;
         }
     });
 
@@ -1011,12 +1075,25 @@ function bindEvents() {
         openProductEditor(file);
     });
 
-    // Double-click to open even in selection mode
+    // Double-click to open in selection mode or open company editor for folders
     body.addEventListener('dblclick', function(e) {
+        // Product card double-click
         var card = e.target.closest('.product-card');
-        if (!card) return;
-        var file = card.dataset.file;
-        if (file) openProductEditor(file);
+        if (card) {
+            var file = card.dataset.file;
+            if (file) openProductEditor(file);
+            return;
+        }
+        // Folder double-click — open company editor
+        var folder = e.target.closest('.folder-item[data-subdir]');
+        if (folder) {
+            var subdir = folder.dataset.subdir;
+            if (subdir && subdir !== '..') {
+                var currentDir = app.getState().currentDir;
+                var fullPath = currentDir + '/' + subdir;
+                handleOpenCompanyEditor(fullPath);
+            }
+        }
     });
 
     // Tab switching
@@ -1105,6 +1182,8 @@ function bindEvents() {
 // ========== HANDLERS ==========
 
 function handleBackToGallery() {
+    // Close both product editor and company editor
+    companyEditorState = { directory: '', company: null };
     app.setState({
         product: null,
         selectedFile: '',
@@ -1144,18 +1223,6 @@ function getParentDir(dir) {
     var idx = normalized.lastIndexOf('/');
     if (idx <= 0) return '/';
     return normalized.substring(0, idx);
-}
-
-function handleNavigateSubdir(fullPath) {
-    // Handle ".." — navigate to parent
-    if (fullPath.endsWith('/..')) {
-        var parent = getParentDir(app.getState().currentDir);
-        if (!parent) return;
-        fullPath = parent;
-    }
-
-    app.setState({ defaultDir: fullPath });
-    loadDirectory(fullPath);
 }
 
 async function handleOpenDir() {
@@ -1238,11 +1305,19 @@ async function loadDirectory(dir) {
         product: null,
         priceHistory: []
     });
+    // Close company editor when navigating
+    companyEditorState = { directory: '', company: null };
     try {
-        var [files, subdirs] = await Promise.all([
-            api.listProducts(dir),
-            api.listSubdirs(dir)
-        ]);
+        var items = await api.listItems(dir);
+        var files = [];
+        var subdirs = [];
+        for (var item of items) {
+            if (item.type === 'file') {
+                files.push(item.path);
+            } else if (item.type === 'folder') {
+                subdirs.push(item);
+            }
+        }
         app.setState({ currentDir: dir, files: files || [], subdirs: subdirs || [], loading: false });
     } catch (err) {
         app.setState({ currentDir: dir, files: [], subdirs: [], loading: false, error: 'Failed to load directory: ' + err.message });
@@ -1570,6 +1645,249 @@ function _showPromptDialog(msg, defaultVal) {
 
 // Override the native synchronous prompt/confirm with async versions
 // Usage: await _showPromptDialog(...), await _showConfirmDialog(...)
+
+// ========== COMPANY EDITOR ==========
+
+function renderCompanyEditor(container) {
+    var c = companyEditorState.company;
+    if (!c) {
+        container.innerHTML = '<div class="empty-tab">Loading company data...</div>';
+        return;
+    }
+
+    var html = '<div class="company-editor">';
+    
+    // Company info
+    html += '<div class="section-header">🏢 Company Information</div>';
+    html += '<div class="form-row">';
+    html += '<div class="form-group" style="flex:2"><label>Company Name</label><input type="text" id="company-name-input" value="' + escapeHtml(c.name) + '" /></div>';
+    html += '<div class="form-group" style="flex:1"><label>Website</label><input type="text" id="company-website-input" value="' + escapeHtml(c.website || '') + '" /></div>';
+    html += '</div>';
+    html += '<div class="form-group" style="margin-bottom:10px"><label>Address</label><input type="text" id="company-address-input" value="' + escapeHtml(c.address || '') + '" /></div>';
+    
+    html += '<div class="form-group" style="margin-bottom:8px"><label>Emails</label>';
+    html += '<div id="company-emails-list">';
+    if (c.emails && c.emails.length > 0) {
+        c.emails.forEach(function(email, idx) {
+            html += '<div class="contact-field-row"><input type="text" class="company-email-input" value="' + escapeHtml(email) + '" data-idx="' + idx + '" /><button class="btn btn-xs btn-danger" data-action="company-remove-email" data-idx="' + idx + '">✕</button></div>';
+        });
+    }
+    html += '</div>';
+    html += '<button class="btn btn-sm" data-action="company-add-email" style="margin-top:4px">➕ Add Email</button></div>';
+
+    html += '<div class="form-group" style="margin-bottom:8px"><label>Phones</label>';
+    html += '<div id="company-phones-list">';
+    if (c.phones && c.phones.length > 0) {
+        c.phones.forEach(function(phone, idx) {
+            html += '<div class="contact-field-row"><input type="text" class="company-phone-input" value="' + escapeHtml(phone) + '" data-idx="' + idx + '" /><button class="btn btn-xs btn-danger" data-action="company-remove-phone" data-idx="' + idx + '">✕</button></div>';
+        });
+    }
+    html += '</div>';
+    html += '<button class="btn btn-sm" data-action="company-add-phone" style="margin-top:4px">➕ Add Phone</button></div>';
+
+    html += '<button class="btn btn-primary" id="company-save-btn" style="margin-top:8px">💾 Save Company</button>';
+
+    // Contacts section
+    html += '<div class="section-header" style="margin-top:24px">👤 Contacts</div>';
+
+    if (c.contacts && c.contacts.length > 0) {
+        c.contacts.forEach(function(contact, idx) {
+            html += '<div class="contact-card" data-contact-idx="' + idx + '">';
+            html += '<div class="contact-header"><strong>' + escapeHtml(contact.fn || 'Unnamed') + '</strong>';
+            html += '<div class="contact-actions">';
+            html += '<button class="btn btn-sm" data-action="company-edit-contact" data-idx="' + idx + '">✏️ Edit</button>';
+            html += '<button class="btn btn-sm btn-danger" data-action="company-delete-contact" data-idx="' + idx + '">🗑 Delete</button>';
+            html += '</div></div>';
+            if (contact.tel) html += '<div class="contact-detail">📞 ' + escapeHtml(contact.tel) + '</div>';
+            if (contact.email) html += '<div class="contact-detail">✉️ ' + escapeHtml(contact.email) + '</div>';
+            if (contact.org) html += '<div class="contact-detail">🏢 ' + escapeHtml(contact.org) + '</div>';
+            if (contact.role) html += '<div class="contact-detail">🎯 ' + escapeHtml(contact.role) + '</div>';
+            html += '</div>';
+        });
+    } else {
+        html += '<div class="empty-tab" style="padding:12px">No contacts yet.</div>';
+    }
+
+    html += '<button class="btn btn-primary" id="company-add-contact-btn" style="margin-top:8px">➕ Add Contact</button>';
+
+    // Contact editor form
+    html += '<div id="contact-editor" style="display:none;margin-top:16px;padding:16px;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius)">';
+    html += '<div class="section-header" id="contact-editor-title">Add Contact</div>';
+    html += '<div class="form-row"><div class="form-group"><label>Full Name *</label><input type="text" id="contact-fn-input" /></div>';
+    html += '<div class="form-group"><label>Structured Name (n)</label><input type="text" id="contact-n-input" /></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Phone</label><input type="text" id="contact-tel-input" /></div>';
+    html += '<div class="form-group"><label>Email</label><input type="text" id="contact-email-input" /></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Organization</label><input type="text" id="contact-org-input" /></div>';
+    html += '<div class="form-group"><label>Role</label><input type="text" id="contact-role-input" /></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Job Title</label><input type="text" id="contact-title-input" /></div>';
+    html += '<div class="form-group"><label>Address</label><input type="text" id="contact-adr-input" /></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>Note</label><input type="text" id="contact-note-input" /></div>';
+    html += '<div class="form-group"><label>Birthday</label><input type="text" id="contact-bday-input" placeholder="YYYY-MM-DD" /></div></div>';
+    html += '<div class="form-row"><div class="form-group"><label>URL</label><input type="text" id="contact-url-input" /></div>';
+    html += '<div class="form-group"><label>Categories</label><input type="text" id="contact-categories-input" /></div></div>';
+    html += '<div class="form-row" style="margin-top:12px">';
+    html += '<button class="btn btn-primary" id="contact-save-btn">💾 Save Contact</button>';
+    html += '<button class="btn" id="contact-cancel-btn">Cancel</button>';
+    html += '<span id="contact-form-status" style="margin-left:12px;font-size:0.9em"></span>';
+    html += '</div></div>';
+
+    html += '</div>'; // company-editor close
+    
+    container.innerHTML = html;
+    
+    // Wire up
+    document.getElementById('company-save-btn').addEventListener('click', handleCompanySave);
+    document.getElementById('company-add-contact-btn').addEventListener('click', function() { showContactForm(-1); });
+    document.getElementById('contact-save-btn').addEventListener('click', handleContactSave);
+    document.getElementById('contact-cancel-btn').addEventListener('click', hideContactForm);
+    var addEmailBtn = document.querySelector('[data-action="company-add-email"]');
+    if (addEmailBtn) addEmailBtn.addEventListener('click', handleCompanyAddEmail);
+    var addPhoneBtn = document.querySelector('[data-action="company-add-phone"]');
+    if (addPhoneBtn) addPhoneBtn.addEventListener('click', handleCompanyAddPhone);
+}
+
+var _editingContactIdx = -1;
+
+function showContactForm(idx) {
+    _editingContactIdx = idx;
+    var editor = document.getElementById('contact-editor');
+    editor.style.display = 'block';
+    document.getElementById('contact-editor-title').textContent = idx >= 0 ? 'Edit Contact' : 'Add Contact';
+    
+    var fields = ['fn', 'n', 'tel', 'email', 'org', 'role', 'title', 'adr', 'note', 'bday', 'url', 'categories'];
+    fields.forEach(function(f) {
+        var el = document.getElementById('contact-' + f + '-input');
+        if (el) el.value = '';
+    });
+    
+    if (idx >= 0 && companyEditorState.company && companyEditorState.company.contacts) {
+        var contact = companyEditorState.company.contacts[idx];
+        if (contact) {
+            fields.forEach(function(f) {
+                var el = document.getElementById('contact-' + f + '-input');
+                if (el && contact[f]) el.value = String(contact[f]);
+            });
+        }
+    }
+    
+    document.getElementById('contact-form-status').textContent = '';
+    editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function hideContactForm() {
+    document.getElementById('contact-editor').style.display = 'none';
+    _editingContactIdx = -1;
+}
+
+async function handleContactSave() {
+    var fn = document.getElementById('contact-fn-input').value.trim();
+    if (!fn) {
+        document.getElementById('contact-form-status').textContent = '❌ Full name is required';
+        return;
+    }
+    
+    var contact = {
+        fn: fn,
+        n: document.getElementById('contact-n-input').value.trim(),
+        tel: document.getElementById('contact-tel-input').value.trim(),
+        email: document.getElementById('contact-email-input').value.trim(),
+        org: document.getElementById('contact-org-input').value.trim(),
+        role: document.getElementById('contact-role-input').value.trim(),
+        title: document.getElementById('contact-title-input').value.trim(),
+        adr: document.getElementById('contact-adr-input').value.trim(),
+        note: document.getElementById('contact-note-input').value.trim(),
+        bday: document.getElementById('contact-bday-input').value.trim(),
+        url: document.getElementById('contact-url-input').value.trim(),
+        categories: document.getElementById('contact-categories-input').value.trim(),
+    };
+    
+    document.getElementById('contact-form-status').textContent = '⏳ Saving...';
+    try {
+        var result;
+        if (_editingContactIdx >= 0) {
+            result = await api.updateContact(companyEditorState.directory, _editingContactIdx, contact);
+        } else {
+            result = await api.addContact(companyEditorState.directory, contact);
+        }
+        companyEditorState.company = result;
+        hideContactForm();
+        renderCompanyEditor(document.getElementById('tab-content'));
+        document.getElementById('contact-form-status').textContent = '';
+        app.setState({ success: 'Contact saved.' });
+    } catch (err) {
+        document.getElementById('contact-form-status').textContent = '❌ ' + err.message;
+    }
+}
+
+async function handleCompanySave() {
+    var company = companyEditorState.company;
+    company.name = document.getElementById('company-name-input').value.trim();
+    company.address = document.getElementById('company-address-input').value.trim();
+    company.website = document.getElementById('company-website-input').value.trim();
+    
+    var emailInputs = document.querySelectorAll('.company-email-input');
+    company.emails = Array.from(emailInputs).map(function(el) { return el.value.trim(); }).filter(Boolean);
+    
+    var phoneInputs = document.querySelectorAll('.company-phone-input');
+    company.phones = Array.from(phoneInputs).map(function(el) { return el.value.trim(); }).filter(Boolean);
+    
+    document.getElementById('company-save-btn').textContent = '⏳ Saving...';
+    document.getElementById('company-save-btn').disabled = true;
+    try {
+        var result = await api.saveCompany(companyEditorState.directory, company);
+        companyEditorState.company = result;
+        app.setState({ success: 'Company saved.' });
+        loadDirectory(app.getState().currentDir);
+    } catch (err) {
+        app.setState({ error: 'Failed to save company: ' + err.message });
+    } finally {
+        document.getElementById('company-save-btn').textContent = '💾 Save Company';
+        document.getElementById('company-save-btn').disabled = false;
+    }
+}
+
+function handleCompanyAddEmail() {
+    var list = document.getElementById('company-emails-list');
+    var idx = list.querySelectorAll('.company-email-input').length;
+    var row = document.createElement('div');
+    row.className = 'contact-field-row';
+    row.innerHTML = '<input type="text" class="company-email-input" data-idx="' + idx + '" placeholder="email@example.com" /><button class="btn btn-xs btn-danger" data-action="company-remove-email" data-idx="' + idx + '">✕</button>';
+    list.appendChild(row);
+    row.querySelector('input').focus();
+}
+
+function handleCompanyAddPhone() {
+    var list = document.getElementById('company-phones-list');
+    var idx = list.querySelectorAll('.company-phone-input').length;
+    var row = document.createElement('div');
+    row.className = 'contact-field-row';
+    row.innerHTML = '<input type="text" class="company-phone-input" data-idx="' + idx + '" placeholder="+123456789" /><button class="btn btn-xs btn-danger" data-action="company-remove-phone" data-idx="' + idx + '">✕</button>';
+    list.appendChild(row);
+    row.querySelector('input').focus();
+}
+
+async function handleOpenCompanyEditor(subdirPath) {
+    app.setState({ loading: true, error: '' });
+    try {
+        var company = await api.getCompany(subdirPath);
+        companyEditorState = { directory: subdirPath, company: company };
+        app.setState({ loading: false });
+    } catch (err) {
+        app.setState({ loading: false, error: 'Failed to load company: ' + err.message });
+    }
+}
+
+function handleNavigateSubdir(fullPath) {
+    // Handle ".." — navigate to parent
+    if (fullPath.endsWith('/..')) {
+        var parent = getParentDir(app.getState().currentDir);
+        if (!parent) return;
+        fullPath = parent;
+    }
+
+    app.setState({ defaultDir: fullPath });
+    loadDirectory(fullPath);
+}
 
 // ========== STARTUP ==========
 document.addEventListener('DOMContentLoaded', init);

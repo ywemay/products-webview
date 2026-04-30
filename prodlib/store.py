@@ -37,6 +37,61 @@ def list_subdirs(dir_path: str) -> list[str]:
             if os.path.isdir(os.path.join(dir_path, e))]
 
 
+def list_items(dir_path: str) -> list[dict]:
+    """Return a combined list of subdirectories (with company.yaml enrichment)
+    and .prod files under dir_path.
+
+    Each item has:
+      type: "folder" | "file"
+      name: str
+      path: str
+      company: dict or None (only for folders)
+    """
+    items = []
+    try:
+        entries = os.listdir(dir_path)
+    except FileNotFoundError:
+        return []
+
+    # Import company module lazily to avoid circular imports
+    from .company import Company
+
+    for name in sorted(entries):
+        full_path = os.path.join(dir_path, name)
+        if os.path.isdir(full_path):
+            item = {
+                "type": "folder",
+                "name": name,
+                "path": full_path,
+                "company": None,
+            }
+            # Try to load company.yaml
+            company_yaml = os.path.join(full_path, "company.yaml")
+            if os.path.isfile(company_yaml):
+                try:
+                    c = Company.load(full_path)
+                    item["company"] = {
+                        "name": c.name,
+                        "address": c.address,
+                        "website": c.website,
+                        "emails": c.emails,
+                        "phones": c.phones,
+                        "contactCount": len(c.contacts),
+                    }
+                except Exception:
+                    pass
+            items.append(item)
+        elif name.endswith(".prod") and os.path.isfile(full_path):
+            items.append({
+                "type": "file",
+                "name": name,
+                "path": full_path,
+                "company": None,
+            })
+
+    return items
+
+
 def create_subdir(parent_dir: str, name: str) -> str:
     """Create a subdirectory. Returns the full path."""
     full = os.path.join(parent_dir, name)
@@ -102,19 +157,23 @@ def remove_photo(path: str, index: int) -> None:
 
 def get_price_history(path: str) -> list[dict]:
     p = Product.open(path)
-    from datetime import datetime
-    return [
-        {
+    from datetime import datetime, timezone
+    result = []
+    for rec in p.price_history:
+        try:
+            dt = datetime.fromtimestamp(rec.timestamp, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            dt = datetime.fromtimestamp(rec.timestamp / 1000, tz=timezone.utc)
+        result.append({
             "timestamp": rec.timestamp,
-            "date": datetime.utcfromtimestamp(rec.timestamp).isoformat(),
+            "date": dt.isoformat(),
             "variation": (p.header.variations[rec.variation_index]
                           if 0 <= rec.variation_index < len(p.header.variations)
                           else ""),
             "price": rec.price_hundredths / 100.0,
             "currency": rec.currency,
-        }
-        for rec in p.price_history
-    ]
+        })
+    return result
 
 
 def get_settings() -> dict:

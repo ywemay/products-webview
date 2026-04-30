@@ -2,3 +2,8 @@
 
 Mirrors the Go implementation in products-lib/prod/.
 """
+
+from .core import Product, Header
+from .company import Company, Contact
+from .store import list_items, get_price_history
+

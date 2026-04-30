@@ -33,6 +33,7 @@ from bottle import Bottle, response, request, static_file, run as bottle_run
 
 import prodlib.store as store
 from prodlib.core import Product
+from prodlib.company import Company, Contact
 
 # ---------------------------------------------------------------------------
 # Bottle HTTP API (port is set via set_api_port before routes are accessed)
@@ -105,6 +106,13 @@ def api_list_products():
 def api_list_subdirs():
     body = request.json or {}
     return json_ok(store.list_subdirs(body.get("dir", "")))
+
+
+@bottle_app.post("/api/list-items")
+def api_list_items():
+    """Return combined list of subdirectories (with company.yaml info) and .prod files."""
+    body = request.json or {}
+    return json_ok(store.list_items(body.get("dir", "")))
 
 
 @bottle_app.post("/api/create-subdir")
@@ -319,6 +327,104 @@ def api_log_client_error():
 @bottle_app.get("/api/health")
 def api_health():
     return json_ok("ok")
+
+
+# Company CRUD -----------------------------------------------------------
+@bottle_app.post("/api/company")
+def api_get_company():
+    """GET company.yaml data from a directory."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    if not directory:
+        return json_err("dir is required")
+    try:
+        c = Company.load(directory)
+        return json_ok(c.to_dict())
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/company/save")
+def api_save_company():
+    """Save company.yaml to a directory."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    if not directory:
+        return json_err("dir is required")
+    try:
+        company_data = body.get("company", {})
+        c = Company(directory)
+        c.name = company_data.get("name", "")
+        c.address = company_data.get("address", "")
+        c.website = company_data.get("website", "")
+        c.emails = company_data.get("emails", [])
+        c.phones = company_data.get("phones", [])
+        for cd in company_data.get("contacts", []):
+            c.contacts.append(Contact.from_dict(cd))
+        c.save()
+        return json_ok(c.to_dict())
+    except Exception as e:
+        return json_err(str(e))
+
+
+# Contact CRUD -----------------------------------------------------------
+@bottle_app.post("/api/company/contact/add")
+def api_add_contact():
+    """Add a contact to company.yaml."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    if not directory:
+        return json_err("dir is required")
+    try:
+        c = Company.load(directory)
+        contact_data = body.get("contact", {})
+        contact = Contact.from_dict(contact_data)
+        c.contacts.append(contact)
+        c.save()
+        return json_ok(c.to_dict())
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/company/contact/update")
+def api_update_contact():
+    """Update a contact by index in company.yaml."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    index = body.get("index")
+    if not directory or index is None:
+        return json_err("dir and index are required")
+    try:
+        c = Company.load(directory)
+        idx = int(index)
+        if idx < 0 or idx >= len(c.contacts):
+            return json_err(f"contact index {idx} out of range")
+        contact_data = body.get("contact", {})
+        c.contacts[idx] = Contact.from_dict(contact_data)
+        c.save()
+        return json_ok(c.to_dict())
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/company/contact/delete")
+def api_delete_contact():
+    """Delete a contact by index from company.yaml."""
+    body = request.json or {}
+    directory = body.get("dir", "")
+    index = body.get("index")
+    if not directory or index is None:
+        return json_err("dir and index are required")
+    try:
+        c = Company.load(directory)
+        idx = int(index)
+        if idx < 0 or idx >= len(c.contacts):
+            return json_err(f"contact index {idx} out of range")
+        c.contacts.pop(idx)
+        c.save()
+        return json_ok(c.to_dict())
+    except Exception as e:
+        return json_err(str(e))
 
 
 # ---------------------------------------------------------------------------
