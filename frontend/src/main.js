@@ -1204,21 +1204,14 @@ async function renderGallery() {
 
     var currentDir = app.getState().currentDir;
 
-    // Fetch current directory's .comp file (if it exists)
-    var currentCompany = null;
-    try {
-        currentCompany = await api.getCompany(currentDir);
-        if (currentCompany && !currentCompany.name) currentCompany = null;
-    } catch (e) {
-        currentCompany = null;
-    }
-
-    // Build combined list: current-dir company card first, then folders, then products
+    // Build combined list: .comp files first, then folders, then deals, then products    
     var items = [];
     
-    // Current directory company card (always first)
-    if (currentCompany) {
-        items.push({ type: 'current-company', data: currentCompany });
+    // .comp files (current directory)
+    if (s.compFiles && s.compFiles.length > 0) {
+        s.compFiles.forEach(function(cf) {
+            items.push({ type: 'comp', data: cf });
+        });
     }
     
     // Subfolders
@@ -1250,43 +1243,30 @@ async function renderGallery() {
     var html = '';
     var productFiles = [];
     items.forEach(function(item) {
-        if (item.type === 'current-company') {
-            // Current-dir company card — click opens externally in company-editor
-            var c = item.data;
-            var compFilePath = (c.filename && currentDir) ? currentDir + '/' + c.filename : '';
-            var typeLabel = c.company_type ? c.company_type.replace(/_/g, ' ').replace(/\b\w/g, function(s) { return s.toUpperCase(); }) : '';
-            html += '<div class="product-card current-company-card" data-action="open-company-editor"' + (compFilePath ? ' data-company-path="' + escapeHtml(compFilePath) + '"' : '') + '>';
+        if (item.type === 'comp') {
+            // .comp file card — click opens externally in company-editor
+            var ci = item.data;
+            var c = ci.company || {};
+            var compPath = ci.path || '';
+            html += '<div class="product-card comp-card" data-comp-path="' + escapeHtml(compPath) + '">';
             html += '<div class="card-thumb" style="background:linear-gradient(135deg,var(--accent),var(--accent-hover));display:flex;align-items:center;justify-content:center"><span style="font-size:36px">🏢</span></div>';
             html += '<div class="card-body">';
-            html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name) + '</div>';
-            // Show company type prominently
-            html += '<div class="card-code" style="font-size:13px;color:var(--text-secondary);font-weight:600">' + escapeHtml(typeLabel || 'Company') + '</div>';
+            html += '<div class="card-title" style="color:var(--accent)">' + escapeHtml(c.name || ci.name) + '</div>';
+            html += '<div class="card-code" style="font-size:12px;color:var(--text-secondary);font-weight:500">.comp</div>';
             if (c.address) {
-                var addrTrunc = c.address.length > 40 ? c.address.substring(0, 40) + '…' : c.address;
-                html += '<div class="card-no-price" style="font-size:12px;color:var(--text-secondary);margin-top:4px">📍 ' + escapeHtml(addrTrunc) + '</div>';
+                html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📍 ' + escapeHtml(c.address.substring(0, 40)) + '</div>';
             }
-            html += '<div class="card-no-price" style="font-size:12px;color:var(--text-muted)">👤 ' + (c.contactCount || 0) + ' contacts</div>';
-            if (c.website) html += '<div class="card-no-price" style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔗 ' + escapeHtml(c.website) + '</div>';
+            html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">👤 ' + (c.contactCount || 0) + ' contacts</div>';
             html += '</div></div>';
         } else if (item.type === 'folder') {
             var d = item.data;
             var folderName = d.name || d;
-            var companyInfo = d.company || null;
 
             html += '<div class="product-card folder-card" data-folder="' + escapeHtml(folderName) + '">';
             html += '<div class="card-thumb" style="background:var(--bg-surface2);display:flex;align-items:center;justify-content:center"><span style="font-size:40px">📁</span></div>';
             html += '<div class="card-body">';
             html += '<div class="card-title">' + escapeHtml(folderName) + '</div>';
-            if (companyInfo && companyInfo.name) {
-                html += '<div class="card-code" style="font-size:12px;color:var(--accent);font-weight:500">' + escapeHtml(companyInfo.name) + '</div>';
-                if (companyInfo.address) {
-                    var addrTrunc = companyInfo.address.length > 35 ? companyInfo.address.substring(0, 35) + '…' : companyInfo.address;
-                    html += '<div class="card-no-price" style="font-size:11px;color:var(--text-secondary)">📍 ' + escapeHtml(addrTrunc) + '</div>';
-                }
-                html += '<div class="card-no-price" style="font-size:11px;color:var(--text-muted)">👤 ' + (companyInfo.contactCount || 0) + ' contacts</div>';
-            } else {
-                html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">No company</div>';
-            }
+            html += '<div class="card-code" style="font-size:12px;color:var(--text-muted)">Folder</div>';
             html += '</div></div>';
         } else if (item.type === 'deal') {
         var di = item.data;
@@ -1622,22 +1602,10 @@ function bindEvents() {
         var card = e.target.closest('.product-card');
         if (!card) return;
 
-        // Current-company card → open externally in company-editor
-        if (card.dataset.action === 'open-company-editor') {
-            var curDir = app.getState().currentDir;
-            if (curDir) {
-                var companyPath = card.dataset.companyPath;
-                if (companyPath) {
-                    api.openSystem(companyPath);
-                } else {
-                    // Fallback: find .comp file in directory via API
-                    api.getCompany(curDir).then(function(c) {
-                        if (c && c.filename) {
-                            api.openSystem(curDir + '/' + c.filename);
-                        }
-                    }).catch(function() {});
-                }
-            }
+        // .comp card → open externally in company-editor
+        var compPath = card.dataset.compPath;
+        if (compPath) {
+            api.openSystem(compPath);
             return;
         }
 
@@ -1935,17 +1903,20 @@ async function loadDirectory(dir) {
         var items = await api.listItems(dir);
         var files = [];
         var dealFiles = [];
+        var compFiles = [];
         var subdirs = [];
         for (var item of items) {
             if (item.type === 'file' && item.subtype === 'deal') {
                 dealFiles.push(item);
+            } else if (item.type === 'file' && item.subtype === 'comp') {
+                compFiles.push(item);
             } else if (item.type === 'file') {
                 files.push(item.path);
             } else if (item.type === 'folder') {
                 subdirs.push(item);
             }
         }
-        app.setState({ currentDir: dir, files: files || [], dealFiles: dealFiles || [], subdirs: subdirs || [], loading: false });
+        app.setState({ currentDir: dir, files: files || [], dealFiles: dealFiles || [], compFiles: compFiles || [], subdirs: subdirs || [], loading: false });
     } catch (err) {
         app.setState({ currentDir: dir, files: [], subdirs: [], loading: false, error: 'Failed to load directory: ' + err.message });
     }

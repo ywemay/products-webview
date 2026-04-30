@@ -59,36 +59,17 @@ def list_items(dir_path: str) -> list[dict]:
     for name in sorted(entries):
         full_path = os.path.join(dir_path, name)
         if os.path.isdir(full_path):
-            item = {
+            items.append({
                 "type": "folder",
                 "name": name,
                 "path": full_path,
-                "company": None,
-            }
-            # Try to load .comp file
-            company_comp = Company.find_company_file(full_path)
-            if company_comp:
-                try:
-                    c = Company.load(full_path)
-                    item["company"] = {
-                        "name": c.name,
-                        "address": c.address,
-                        "website": c.website,
-                        "company_type": c.company_type,
-                        "emails": c.emails,
-                        "phones": c.phones,
-                        "contactCount": len(c.contacts),
-                    }
-                except Exception:
-                    pass
-            items.append(item)
+            })
         elif name.endswith(".prod") and os.path.isfile(full_path):
             items.append({
                 "type": "file",
                 "name": name,
                 "path": full_path,
                 "subtype": "prod",
-                "company": None,
             })
         elif name.endswith(".deal") and os.path.isfile(full_path):
             from .deal import Deal
@@ -109,8 +90,22 @@ def list_items(dir_path: str) -> list[dict]:
                 "name": name,
                 "path": full_path,
                 "subtype": "deal",
-                "company": None,
                 "deal_info": deal_info.get("deal"),
+            })
+        elif name.endswith(".comp") and os.path.isfile(full_path):
+            from .company import Company
+            comp_info = {"name": name, "path": full_path, "subtype": "comp"}
+            try:
+                c = Company.load(dir_path)
+                comp_info["company"] = c.to_dict()
+            except Exception:
+                pass
+            items.append({
+                "type": "file",
+                "name": name,
+                "path": full_path,
+                "subtype": "comp",
+                "company": comp_info.get("company"),
             })
 
     return items
