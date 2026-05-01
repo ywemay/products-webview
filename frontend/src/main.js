@@ -1507,7 +1507,7 @@ var Company = {
 
 function openProductEditor(file) {
     // Open the .prod file with the system default handler
-    // (the dedicated products-desktop-editor which handles one file at a time)
+    // (the dedicated product-editor which handles one file at a time)
     api.openSystem(file).catch(function(err) {
         app.setState({ error: 'Failed to open file: ' + err.message });
     });

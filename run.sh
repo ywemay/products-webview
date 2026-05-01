@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the Products Manager desktop app
+# Run the Company File Manager desktop app
 cd "$(dirname "$0")"
 LOG="logs/$(date +%Y%m%d-%H%M%S).log"
 mkdir -p logs

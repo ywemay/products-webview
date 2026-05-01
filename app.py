@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Products Manager — PyWebView desktop application.
+"""Company File Manager — PyWebView desktop application.
+
+Browse and manage company business files: products (.prod), companies (.comp),
+deals (.deal), and any document files (PDFs, office files, text, etc.).
 
 Architecture:
   - A Bottle HTTP server runs on a random localhost port.
@@ -21,11 +24,11 @@ import traceback
 # Logging: writes to stderr (captured by run.sh tee to log file)
 # ---------------------------------------------------------------------------
 def log(msg):
-    print(f"[products-webview] {msg}", file=sys.stderr, flush=True)
+    print(f"[company-file-manager] {msg}", file=sys.stderr, flush=True)
 
 
 def log_error(msg):
-    print(f"[products-webview ERROR] {msg}", file=sys.stderr, flush=True)
+    print(f"[company-file-manager ERROR] {msg}", file=sys.stderr, flush=True)
     traceback.print_exc(file=sys.stderr)
 
 import webview
@@ -678,7 +681,7 @@ def main():
     api = Api()
     log("Creating WebView window...")
     webview.create_window(
-        "Products Manager",
+        "Company File Manager",
         url=f"http://127.0.0.1:{port}/",
         width=1024,
         height=768,

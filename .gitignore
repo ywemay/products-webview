@@ -1,22 +1,16 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-venv/
+# Build outputs
 dist/
 build/
-*.spec
-
-# OS files
-.DS_Store
-Thumbs.db
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 
-# Logs
-logs/
-
-# Runtime data (per-user)
-data/settings.json
+# OS
+.DS_Store
+Thumbs.db
