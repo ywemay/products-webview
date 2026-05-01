@@ -9,7 +9,8 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Optional
 
-MAGIC = b"PROD\x02"
+MAGIC_V2 = b"PROD\x02"
+MAGIC_V3 = b"PROD\x03"
 MAX_PHOTOS = 25
 
 
@@ -29,13 +30,22 @@ def _normalize_timestamp(ts: int) -> int:
 
 
 @dataclass
+class VariationGroup:
+    name: str = ""
+    values: list = field(default_factory=list)
+    affects_price: bool = True
+    affects_appearance: bool = True
+
+
+@dataclass
 class Header:
-    version: int = 2
+    version: int = 3
     title: str = ""
     uuid: str = ""
     code: str = ""
     description: str = ""
-    variations: list = field(default_factory=list)
+    unit: str = ""
+    variation_groups: list = field(default_factory=list)
 
 
 @dataclass
@@ -44,6 +54,73 @@ class PriceRecord:
     variation_index: int = -1
     price_hundredths: int = 0  # price * 100 + 0.5
     currency: str = "USD"
+
+
+def generate_combinations(variation_groups: list) -> list[dict]:
+    """Generate all combinations across variation groups.
+    
+    First group changes slowest, last group changes fastest.
+    Returns list of dicts with 'values' (list) and 'label' (str).
+    """
+    if not variation_groups:
+        return []
+    
+    # If any group has no values, there are no valid combinations
+    for g in variation_groups:
+        if not g.get("values") if isinstance(g, dict) else not g.values:
+            return []
+    
+    groups = variation_groups
+    total = 1
+    for g in groups:
+        vals = g.get("values") if isinstance(g, dict) else g.values
+        total *= len(vals)
+    
+    result = []
+    for i in range(total):
+        values = []
+        remain = i
+        # Last group cycles fastest
+        for gi in range(len(groups) - 1, -1, -1):
+            g = groups[gi]
+            vals = g.get("values") if isinstance(g, dict) else g.values
+            idx = remain % len(vals)
+            values.insert(0, vals[idx])
+            remain //= len(vals)
+        
+        # Build label
+        parts = [v for v in values if v]
+        label = " / ".join(parts) if parts else ""
+        
+        result.append({"values": values, "label": label})
+    
+    return result
+
+
+def _convert_v2_variations(raw: dict) -> list[dict]:
+    """Convert old flat 'variations' list to new 'variation_groups' format."""
+    old_vars = raw.get("variations", [])
+    if old_vars and not raw.get("variation_groups"):
+        return [{"name": "", "values": old_vars, "affects_price": True}]
+    return raw.get("variation_groups", [])
+
+
+def price_affecting_combinations(variation_groups: list) -> list[dict]:
+    """Return combinations from groups where affects_price is True.
+    
+    If no groups affect price, returns a single "Base" combination.
+    """
+    affected = []
+    for g in variation_groups:
+        if isinstance(g, dict):
+            if g.get("affects_price", True):
+                affected.append(g)
+        else:
+            if getattr(g, "affects_price", True):
+                affected.append(g)
+    if not affected:
+        return [{"values": [], "label": "Base"}]
+    return generate_combinations(affected)
 
 
 class Product:
@@ -60,7 +137,7 @@ class Product:
         uid = _generate_uuid()
         if not code:
             code = _generate_code(uid)
-        hdr = Header(version=2, title=title, uuid=uid,
+        hdr = Header(version=3, title=title, uuid=uid,
                      code=code, description=description)
         p = cls(hdr)
         p.save(path)
@@ -69,20 +146,32 @@ class Product:
     @classmethod
     def open(cls, path: str) -> "Product":
         with open(path, "rb") as f:
-            magic = f.read(len(MAGIC))
-            if magic != MAGIC:
+            magic = f.read(5)
+            if magic == MAGIC_V2 or magic == MAGIC_V3:
+                pass  # valid
+            else:
                 raise ValueError("not a valid .prod file")
 
             hdr_len = struct.unpack("<I", f.read(4))[0]
             hdr_buf = f.read(hdr_len)
             raw = json.loads(hdr_buf.decode("utf-8", errors="replace"))
+            
+            # v2 → v3 migration: convert flat variations to variation groups
+            if raw.get("version", 2) < 3:
+                raw["version"] = 3
+            
+            variation_groups = _convert_v2_variations(raw)
+            
             hdr = Header(
-                version=raw.get("version", 2),
+                version=raw.get("version", 3),
                 title=raw.get("title", ""),
                 uuid=raw.get("uuid", ""),
                 code=raw.get("code", ""),
                 description=raw.get("description", ""),
-                variations=raw.get("variations", []),
+                variation_groups=[
+                    VariationGroup(name=g.get("name", ""), values=g.get("values", []), affects_price=g.get("affects_price", True), affects_appearance=g.get("affects_appearance", True))
+                    for g in variation_groups
+                ],
             )
             p = cls(hdr)
 
@@ -109,12 +198,13 @@ class Product:
         return p
 
     def save(self, path: str):
+        self.header.version = 3
         dirname = os.path.dirname(path)
         fd, tmp = tempfile.mkstemp(dir=dirname or ".", prefix=".prod-tmp-")
         try:
             with os.fdopen(fd, "wb") as f:
-                # Magic
-                f.write(MAGIC)
+                # Magic (v3)
+                f.write(MAGIC_V3)
                 # Header
                 hdr_json = json.dumps(asdict(self.header),
                                       ensure_ascii=False).encode("utf-8")

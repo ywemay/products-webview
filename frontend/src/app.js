@@ -101,6 +101,16 @@ const api = {
     updateDescription:    (path, desc) =>
                                apiCall('POST', '/api/update-description',
                                        { path, description: desc }),
+    saveProduct:           (path, product) => apiCall('POST', '/api/save', { path, product }),
+    editPrice:             (path, index, price, currency) =>
+                               apiCall('POST', '/api/price/edit',
+                                       { path, index, price, currency }),
+    deletePrice:           (path, index) => apiCall('POST', '/api/price/delete', { path, index }),
+    exportPhoto:           (path, index) => apiCall('POST', '/api/photo/export', { path, index }),
+    movePhoto:             (path, index, direction) =>
+                               apiCall('POST', '/api/photo/move',
+                                       { path, index, direction }),
+    openUrl:               (url) => apiCall('GET', '/api/open-url?url=' + encodeURIComponent(url)),
     deleteProducts:        (paths) => apiCall('POST', '/api/delete-products', { paths }),
     copyProducts:          (paths, targetDir) => apiCall('POST', '/api/copy-products', { paths, targetDir }),
     moveProducts:          (paths, targetDir) => apiCall('POST', '/api/move-products', { paths, targetDir }),

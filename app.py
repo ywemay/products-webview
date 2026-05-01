@@ -231,6 +231,21 @@ def api_price_history():
         return json_err(str(e))
 
 
+@bottle_app.post("/api/save")
+def api_save_product():
+    """Save product fields (title, code, unit, description, variation_groups)."""
+    body = request.json or {}
+    path = body.get("path", "")
+    if not path:
+        return json_err("path is required")
+    try:
+        result = store.save_product(path, body.get("product", {}))
+        result["filepath"] = path
+        return json_ok(result)
+    except Exception as e:
+        return json_err(str(e))
+
+
 @bottle_app.post("/api/update-description")
 def api_update_description():
     body = request.json or {}
@@ -244,6 +259,77 @@ def api_update_description():
         p.save(path)
         return json_ok(None)
     except (ValueError, OSError) as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/price/edit")
+def api_price_edit():
+    body = request.json or {}
+    path = body.get("path", "")
+    index = body.get("index", -1)
+    if not path or index < 0:
+        return json_err("path and index are required")
+    try:
+        store.edit_price(path, index, body.get("price", None), body.get("currency", None))
+        return json_ok(store.get_price_history(path))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/price/delete")
+def api_price_delete():
+    body = request.json or {}
+    path = body.get("path", "")
+    index = body.get("index", -1)
+    if not path or index < 0:
+        return json_err("path and index are required")
+    try:
+        store.delete_price(path, index)
+        return json_ok(store.get_price_history(path))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/photo/export")
+def api_photo_export():
+    body = request.json or {}
+    path = body.get("path", "")
+    index = body.get("index", -1)
+    if not path or index < 0:
+        return json_err("path and index are required")
+    try:
+        result = store.export_photo(path, index)
+        return json_ok(result)
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.post("/api/photo/move")
+def api_photo_move():
+    body = request.json or {}
+    path = body.get("path", "")
+    index = body.get("index", -1)
+    direction = body.get("direction", 0)
+    if not path or index < 0 or direction == 0:
+        return json_err("path, index, and direction are required")
+    try:
+        store.move_photo(path, index, direction)
+        return json_ok(store.open_product(path))
+    except Exception as e:
+        return json_err(str(e))
+
+
+@bottle_app.get("/api/open-url")
+def api_open_url():
+    """Open a URL in the default OS browser/mail client."""
+    url = request.query.get("url", "")
+    if not url:
+        return json_err("url is required")
+    try:
+        import webbrowser
+        webbrowser.open(url)
+        return json_ok({"opened": True})
+    except Exception as e:
         return json_err(str(e))
 
 

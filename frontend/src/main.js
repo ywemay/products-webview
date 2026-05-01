@@ -41,10 +41,10 @@ function loadLocalVariations(productUuid) {
     return val ? JSON.parse(val) : null;
 }
 
-function saveLocalVariations(productUuid, variations) {
+function saveLocalVariations(productUuid, variationGroups) {
     if (!productUuid) return;
     localStorage.setItem(getVariationsKey(productUuid), JSON.stringify({
-        variations: variations,
+        variation_groups: variationGroups,
         savedAt: Date.now()
     }));
 }
@@ -60,6 +60,18 @@ function saveLocalPriceExtras(productUuid, timestamp, extras) {
 
 function removeLocalPriceExtras(productUuid, timestamp) {
     localStorage.removeItem(getPriceExtrasKey(productUuid, timestamp));
+}
+
+/** Get all flat variation values from variation_groups */
+function getAllVariationValues(variationGroups) {
+    if (!variationGroups) return [];
+    var values = [];
+    variationGroups.forEach(function(g) {
+        if (g.values) {
+            values = values.concat(g.values);
+        }
+    });
+    return values;
 }
 
 // ========== STARTUP DIALOG ==========
@@ -395,11 +407,13 @@ function renderDetailHeader() {
     const p = s.product;
     const header = document.getElementById('detail-header');
 
+    var unitStr = p.unit ? ('<span><span class="label">Unit:</span> ' + escapeHtml(p.unit) + '</span>') : '';
     header.innerHTML = `
         <h2>${escapeHtml(p.title)}</h2>
         <div class="meta">
             <span><span class="label">Code:</span> ${escapeHtml(p.code)}</span>
             <span><span class="label">UUID:</span> ${escapeHtml(p.uuid)}</span>
+            ${unitStr}
             <span><span class="label">Photos:</span> ${p.photoCount}/25</span>
             <span><span class="label">Prices:</span> ${p.priceCount}</span>
         </div>
@@ -478,46 +492,79 @@ function renderVariationsTab(container) {
     const p = s.product;
 
     const localVars = loadLocalVariations(p.uuid);
-    const variations = localVars ? localVars.variations : (p.variations || []);
+    const variationGroups = localVars ? localVars.variation_groups : (p.variation_groups || []);
     const hasLocal = localVars !== null;
-    const hasBackendVars = p.variations && p.variations.length > 0;
+    const hasBackendVars = p.variation_groups && p.variation_groups.length > 0;
 
     let html = '';
 
+    // Determine if we have any groups with values
+    var hasValues = false;
+    var totalValues = 0;
+    variationGroups.forEach(function(g) {
+        if (g.values && g.values.length > 0) {
+            hasValues = true;
+            totalValues += g.values.length;
+        }
+    });
+
     if (hasLocal) {
-        html += `<div class="variation-hint" style="border-color:rgba(249,226,175,0.3);background:rgba(249,226,175,0.08);">
-            📝 Variations are stored locally in this browser. They will be overwritten if you re-open the product.
-        </div>`;
+        html += '<div class="variation-hint" style="border-color:rgba(249,226,175,0.3);background:rgba(249,226,175,0.08);">';
+        html += '📝 Variations are stored locally in this browser. They will be overwritten if you re-open the product.';
+        html += '</div>';
     } else if (!hasBackendVars) {
-        html += `<div class="variation-hint" style="border-color:rgba(166,227,161,0.2);background:rgba(166,227,161,0.08);">
-            💡 Variations help organize different product variants (e.g. size, color, weight).
-            Add your first variation below.
-        </div>`;
+        html += '<div class="variation-hint" style="border-color:rgba(166,227,161,0.2);background:rgba(166,227,161,0.08);">';
+        html += '💡 Variation groups help organize product variants (e.g. size, color).';
+        html += ' Each group can toggle whether it affects price and appearance.';
+        html += '</div>';
     }
 
-    html += '<div class="section-header" style="margin-top:12px">Current Variations</div>';
+    html += '<div class="section-header" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">';
+    html += '<span>Variation Groups</span>';
+    html += '<button class="btn btn-sm" id="add-variation-group-btn" style="font-size:12px">➕ Add Group</button>';
+    html += '</div>';
 
-    if (variations.length === 0) {
-        html += '<div class="empty-tab" style="padding:16px">No variations defined yet.</div>';
+    if (variationGroups.length === 0) {
+        html += '<div class="empty-tab" style="padding:16px">No variation groups defined yet.</div>';
     } else {
-        html += '<div id="variations-list">';
-        variations.forEach((v, idx) => {
-            html += `<div class="variation-item" data-variation-idx="${idx}">
-                <span class="variation-name">🏷️ ${escapeHtml(v)}</span>
-                <button class="variation-remove" data-action="remove-variation" data-variation-idx="${idx}" title="Remove variation">✕</button>
-            </div>`;
+        html += '<div id="variation-groups-list">';
+        variationGroups.forEach(function(g, gIdx) {
+            html += '<div class="variation-group-card" data-group-idx="' + gIdx + '" style="margin:8px 0;padding:10px;background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius)">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+            html += '<div style="display:flex;align-items:center;gap:8px;flex:1">';
+            html += '<input type="text" class="variation-group-name" value="' + escapeHtml(g.name || '') + '" placeholder="Group name (e.g. Size, Color)" style="flex:1;padding:4px 6px;font-size:13px" />';
+            html += '</div>';
+            html += '<button class="btn btn-xs btn-danger" data-action="remove-variation-group" data-group-idx="' + gIdx + '" title="Remove group">✕</button>';
+            html += '</div>';
+            html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">';
+            html += '<label style="display:flex;align-items:center;gap:3px"><input type="checkbox" class="variation-group-affects-price" ' + (g.affects_price !== false ? 'checked' : '') + ' /> Affects price</label>';
+            html += '<label style="display:flex;align-items:center;gap:3px"><input type="checkbox" class="variation-group-affects-appearance" ' + (g.affects_appearance !== false ? 'checked' : '') + ' /> Affects appearance</label>';
+            html += '</div>';
+            html += '<div class="variation-group-values" data-group-idx="' + gIdx + '">';
+            if (g.values && g.values.length > 0) {
+                g.values.forEach(function(v, vIdx) {
+                    html += '<div class="variation-group-value-row" style="display:flex;align-items:center;gap:4px;margin:3px 0">';
+                    html += '<input type="text" class="variation-group-value-input" value="' + escapeHtml(v) + '" placeholder="Value" style="flex:1;padding:3px 6px;font-size:12px" />';
+                    html += '<button class="btn btn-xs btn-danger" data-action="remove-variation-value" data-group-idx="' + gIdx + '" data-value-idx="' + vIdx + '" title="Remove value">✕</button>';
+                    html += '</div>';
+                });
+            }
+            html += '<button class="btn btn-xs" data-action="add-variation-value" data-group-idx="' + gIdx + '" style="margin-top:4px;font-size:11px">➕ Add value</button>';
+            html += '</div>';
+            html += '</div>';
         });
         html += '</div>';
     }
 
-    html += `
-        <div class="variation-add-row">
-            <input type="text" id="new-variation-input" placeholder="e.g. Small, Red, 500ml..." />
-            <button class="btn btn-primary" id="add-variation-btn">➕ Add</button>
-        </div>
-    `;
+    html += '<div style="display:flex;gap:8px;margin-top:12px">';
+    html += '<button class="btn btn-primary" id="save-variation-groups-btn" style="font-size:13px">💾 Save Variation Groups</button>';
+    html += ' <span id="variation-groups-status" style="font-size:12px;color:var(--text-muted);align-self:center"></span>';
+    html += '</div>';
 
     container.innerHTML = html;
+
+    // Bind events for this tab
+    bindVariationTabEvents();
 }
 
 // ========== PRICES TAB ==========
@@ -527,8 +574,9 @@ function renderPricesTab(container) {
     const p = s.product;
 
     const localVars = loadLocalVariations(p.uuid);
-    const variations = localVars ? localVars.variations : (p.variations || []);
+    const variationGroups = localVars ? localVars.variation_groups : (p.variation_groups || []);
     const hasLocalVars = localVars !== null;
+    const variations = getAllVariationValues(variationGroups);
 
     // Add price form
     let html = `
@@ -643,6 +691,26 @@ function renderDescriptionTab(container) {
     const desc = p.description || '';
 
     let html = `
+        <div class="section-header">Product Info</div>
+        <div class="form-row-compact">
+            <div class="form-group" style="flex:2">
+                <label>Title</label>
+                <input type="text" id="product-title-input" value="${escapeHtml(p.title)}" style="width:100%;padding:6px" />
+            </div>
+            <div class="form-group" style="flex:1">
+                <label>Code</label>
+                <input type="text" id="product-code-input" value="${escapeHtml(p.code)}" style="width:100%;padding:6px" />
+            </div>
+            <div class="form-group" style="flex:0.5">
+                <label>Unit</label>
+                <input type="text" id="product-unit-input" value="${escapeHtml(p.unit || '')}" placeholder="pcs" style="width:100%;padding:6px" />
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+            <button class="btn btn-sm btn-primary" id="save-product-info-btn">💾 Save Info</button>
+            <span id="product-info-status" style="font-size:12px;color:var(--text-muted);align-self:center"></span>
+        </div>
+
         <div class="section-header">Product Description (Markdown)</div>
         <div class="description-editor-wrapper">
             <textarea id="description-editor" rows="12" placeholder="Write markdown description here...\n\n**Bold** *italic*\n- bullet list\n\n> quote">${escapeHtml(desc)}</textarea>
@@ -681,6 +749,35 @@ function renderDescriptionTab(container) {
             document.getElementById('save-description-btn').disabled = false;
         }
     });
+
+    // Save product info (title, code, unit)
+    var infoBtn = document.getElementById('save-product-info-btn');
+    if (infoBtn) {
+        infoBtn.addEventListener('click', async function() {
+            var infoStatus = document.getElementById('product-info-status');
+            infoStatus.textContent = '⏳ Saving...';
+            try {
+                await apiCall('POST', '/api/save', {
+                    path: s.selectedFile,
+                    product: {
+                        title: document.getElementById('product-title-input').value.trim(),
+                        code: document.getElementById('product-code-input').value.trim(),
+                        unit: document.getElementById('product-unit-input').value.trim(),
+                    }
+                });
+                // Update local state
+                s.product.title = document.getElementById('product-title-input').value.trim();
+                s.product.code = document.getElementById('product-code-input').value.trim();
+                s.product.unit = document.getElementById('product-unit-input').value.trim();
+                renderDetailHeader();
+                infoStatus.textContent = '✅ Saved';
+                infoStatus.style.color = '#a6e3a1';
+            } catch (err) {
+                infoStatus.textContent = '❌ Error: ' + err.message;
+                infoStatus.style.color = '#f38ba8';
+            }
+        });
+    }
 
     // Live preview on input
     const editor = document.getElementById('description-editor');
@@ -1464,7 +1561,23 @@ function bindEvents() {
             case 'back-to-gallery': handleBackToGallery(); break;
             case 'remove-variation':
                 var idx = parseInt(btn.dataset.variationIdx);
-                handleRemoveVariation(idx);
+                // Forward to removal via group context if available
+                var groupCard = btn.closest('.variation-group-card');
+                if (groupCard) {
+                    var gIdx = parseInt(groupCard.dataset.groupIdx);
+                    var s = app.getState();
+                    if (!s.product) return;
+                    var localVars = loadLocalVariations(s.product.uuid);
+                    var groups = JSON.parse(JSON.stringify(localVars ? localVars.variation_groups : (s.product.variation_groups || [])));
+                    if (gIdx >= 0 && gIdx < groups.length && idx >= 0 && idx < (groups[gIdx].values || []).length) {
+                        groups[gIdx].values.splice(idx, 1);
+                        saveLocalVariations(s.product.uuid, groups);
+                        var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+                        app.setState({ product: updatedProduct, activeTab: 'variations' });
+                    }
+                } else {
+                    handleRemoveVariation(idx);
+                }
                 break;
             case 'set-startup-dir': handleSetStartupDir(); break;
             case 'skip-startup': handleSkipStartup(); break;
@@ -2014,49 +2127,145 @@ async function handleRemovePhoto(idx) {
 
 // ========== VARIATIONS HANDLERS ==========
 
-function getCurrentProductVariations() {
+// ========== VARIATION GROUP TAB EVENTS ==========
+
+function bindVariationTabEvents() {
+    // Add variation group
+    var addGroupBtn = document.getElementById('add-variation-group-btn');
+    if (addGroupBtn) {
+        addGroupBtn.addEventListener('click', function() {
+            var s = app.getState();
+            if (!s.product) { app.setState({ error: 'No product selected.' }); return; }
+            var localVars = loadLocalVariations(s.product.uuid);
+            var groups = localVars ? localVars.variation_groups : (s.product.variation_groups || []).slice();
+            groups.push({ name: '', values: [], affects_price: true, affects_appearance: true });
+            saveLocalVariations(s.product.uuid, groups);
+            var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+            app.setState({ product: updatedProduct, activeTab: 'variations' });
+        });
+    }
+
+    // Remove variation group
+    document.querySelectorAll('[data-action="remove-variation-group"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var gIdx = parseInt(btn.dataset.groupIdx);
+            var s = app.getState();
+            if (!s.product) return;
+            var localVars = loadLocalVariations(s.product.uuid);
+            var groups = localVars ? localVars.variation_groups : (s.product.variation_groups || []).slice();
+            if (gIdx < 0 || gIdx >= groups.length) return;
+            groups.splice(gIdx, 1);
+            saveLocalVariations(s.product.uuid, groups);
+            var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+            app.setState({ product: updatedProduct, activeTab: 'variations' });
+        });
+    });
+
+    // Add value to a group
+    document.querySelectorAll('[data-action="add-variation-value"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var gIdx = parseInt(btn.dataset.groupIdx);
+            var s = app.getState();
+            if (!s.product) return;
+            var localVars = loadLocalVariations(s.product.uuid);
+            var groups = JSON.parse(JSON.stringify(localVars ? localVars.variation_groups : (s.product.variation_groups || [])));
+            if (gIdx < 0 || gIdx >= groups.length) return;
+            if (!groups[gIdx].values) groups[gIdx].values = [];
+            groups[gIdx].values.push('');
+            saveLocalVariations(s.product.uuid, groups);
+            var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+            app.setState({ product: updatedProduct, activeTab: 'variations' });
+        });
+    });
+
+    // Remove value from a group
+    document.querySelectorAll('[data-action="remove-variation-value"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var gIdx = parseInt(btn.dataset.groupIdx);
+            var vIdx = parseInt(btn.dataset.valueIdx);
+            var s = app.getState();
+            if (!s.product) return;
+            var localVars = loadLocalVariations(s.product.uuid);
+            var groups = JSON.parse(JSON.stringify(localVars ? localVars.variation_groups : (s.product.variation_groups || [])));
+            if (gIdx < 0 || gIdx >= groups.length) return;
+            if (vIdx < 0 || vIdx >= (groups[gIdx].values || []).length) return;
+            groups[gIdx].values.splice(vIdx, 1);
+            saveLocalVariations(s.product.uuid, groups);
+            var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+            app.setState({ product: updatedProduct, activeTab: 'variations' });
+        });
+    });
+
+    // Save variation groups to backend
+    var saveBtn = document.getElementById('save-variation-groups-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async function() {
+            var s = app.getState();
+            if (!s.product || !s.selectedFile) { app.setState({ error: 'No product selected.' }); return; }
+
+            var statusEl = document.getElementById('variation-groups-status');
+            statusEl.textContent = '⏳ Saving...';
+
+            // Gather current state from the DOM
+            var groups = [];
+            document.querySelectorAll('.variation-group-card').forEach(function(card) {
+                var gIdx = parseInt(card.dataset.groupIdx);
+                var nameInput = card.querySelector('.variation-group-name');
+                var affectsPriceCb = card.querySelector('.variation-group-affects-price');
+                var affectsAppearanceCb = card.querySelector('.variation-group-affects-appearance');
+                var values = [];
+                card.querySelectorAll('.variation-group-value-input').forEach(function(input) {
+                    var val = input.value.trim();
+                    if (val) values.push(val);
+                });
+                var name = nameInput ? nameInput.value.trim() : '';
+                groups.push({
+                    name: name,
+                    values: values,
+                    affects_price: affectsPriceCb ? affectsPriceCb.checked : true,
+                    affects_appearance: affectsAppearanceCb ? affectsAppearanceCb.checked : true
+                });
+            });
+
+            try {
+                var result = await apiCall('POST', '/api/save', {
+                    path: s.selectedFile,
+                    product: { variation_groups: groups }
+                });
+                // Clear local storage copy — backend now has it
+                localStorage.removeItem(getVariationsKey(s.product.uuid));
+                var updatedProduct = Object.assign({}, s.product, { variation_groups: groups });
+                app.setState({ product: updatedProduct });
+                statusEl.textContent = '✅ Saved to .prod file';
+                statusEl.style.color = '#a6e3a1';
+            } catch (err) {
+                statusEl.textContent = '❌ Error: ' + err.message;
+                statusEl.style.color = '#f38ba8';
+            }
+        });
+    }
+}
+
+function getCurrentProductVariationGroups() {
     var s = app.getState();
     if (!s.product) return [];
     var localVars = loadLocalVariations(s.product.uuid);
-    return localVars ? localVars.variations : (s.product.variations || []);
+    if (localVars && localVars.variation_groups) return localVars.variation_groups;
+    return s.product.variation_groups || [];
+}
+
+function getCurrentProductVariations() {
+    return getAllVariationValues(getCurrentProductVariationGroups());
 }
 
 async function handleAddVariation() {
-    var s = app.getState();
-    if (!s.product) { app.setState({ error: 'No product selected.' }); return; }
-
-    var input = document.getElementById('new-variation-input');
-    var name = input ? input.value.trim() : '';
-    if (!name) { app.setState({ error: 'Please enter a variation name.' }); return; }
-
-    var current = getCurrentProductVariations();
-    if (current.indexOf(name) !== -1) {
-        app.setState({ error: 'Variation "' + name + '" already exists.' });
-        return;
-    }
-
-    current.push(name);
-    saveLocalVariations(s.product.uuid, current);
-
-    var updatedProduct = Object.assign({}, s.product, { variations: current });
-    app.setState({ product: updatedProduct, activeTab: 'variations', success: 'Variation "' + name + '" added (local).' });
-
-    input.value = '';
+    // Deprecated — use variation groups UI instead
+    app.setState({ error: 'Use the variation group interface to add options. Click "Add Group" to create a new variation group.' });
 }
 
 async function handleRemoveVariation(idx) {
-    var s = app.getState();
-    if (!s.product) { app.setState({ error: 'No product selected.' }); return; }
-
-    var current = getCurrentProductVariations();
-    if (idx < 0 || idx >= current.length) return;
-
-    var removed = current[idx];
-    current.splice(idx, 1);
-    saveLocalVariations(s.product.uuid, current);
-
-    var updatedProduct = Object.assign({}, s.product, { variations: current });
-    app.setState({ product: updatedProduct, activeTab: 'variations', success: 'Variation "' + removed + '" removed (local).' });
+    // Deprecated — use variation groups UI instead
+    app.setState({ error: 'Remove individual values from the variation group cards.' });
 }
 
 // ========== PRICE HANDLERS ==========
@@ -2113,7 +2322,7 @@ async function handleAddPrice() {
         // Reload product and price history
         var product = await api.openProduct(s.selectedFile);
         var localVars = loadLocalVariations(product.uuid);
-        if (localVars) product.variations = localVars.variations;
+        if (localVars && localVars.variation_groups) product.variation_groups = localVars.variation_groups;
 
         app.setState({ product: product, priceHistory: history, loading: false, success: 'Added ' + currency + ' ' + price.toFixed(2) });
     } catch (err) {
