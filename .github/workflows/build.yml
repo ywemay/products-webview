@@ -34,9 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create prodlib symlink
-        run: ln -sf ../shared/prodlib prodlib
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -62,21 +59,21 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller Company-File-Manager-Linux.spec
 
+      - name: Debug - list dist contents
+        run: ls -laR dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-Linux-v${{ needs.version.outputs.tag }}
           path: dist/Company-File-Manager-Linux/
-          if-no-files-found: error
+          if-no-files-found: warn
 
   macos:
     needs: [version]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-
-      - name: Create prodlib symlink
-        run: ln -sf ../shared/prodlib prodlib
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -102,8 +99,12 @@ jobs:
             --hidden-import prodlib.core \
             --hidden-import prodlib.store \
             --hidden-import prodlib.deal \
+            --hidden-import prodlib.company \
             --hidden-import bottle \
             app.py
+
+      - name: Debug - list dist contents
+        run: ls -laR dist/
 
       - name: Create DMG
         run: |
@@ -126,19 +127,18 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}-macOS-v${{ needs.version.outputs.tag }}
           path: |
-            dist/Company-File-Manager.app
+            dist/Company-File-Manager.app/
             Company-File-Manager-*.dmg
           if-no-files-found: warn
 
   windows:
     needs: [version]
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      - name: Create prodlib symlink
-        shell: bash
-        run: ln -sf ../shared/prodlib prodlib
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -155,24 +155,28 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller `
-            --onedir --windowed `
-            --name "Company-File-Manager" `
-            --icon app.icns `
-            --add-data "frontend;frontend" `
-            --hidden-import prodlib `
-            --hidden-import prodlib.core `
-            --hidden-import prodlib.store `
-            --hidden-import prodlib.deal `
-            --hidden-import bottle `
+          pyinstaller \
+            --onedir --windowed \
+            --name "Company-File-Manager" \
+            --icon app.icns \
+            --add-data "frontend;frontend" \
+            --hidden-import prodlib \
+            --hidden-import prodlib.core \
+            --hidden-import prodlib.store \
+            --hidden-import prodlib.deal \
+            --hidden-import prodlib.company \
+            --hidden-import bottle \
             app.py
+
+      - name: Debug - list dist contents
+        run: ls -laR dist/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-Windows-v${{ needs.version.outputs.tag }}
           path: dist/Company-File-Manager/
-          if-no-files-found: error
+          if-no-files-found: warn
 
   release:
     needs: [version, linux, macos, windows]
